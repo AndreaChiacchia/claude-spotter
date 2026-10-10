@@ -1,6 +1,6 @@
 # Claude-Spotter
 
-![version](https://img.shields.io/badge/version-0.1.0-blue)
+![version](https://img.shields.io/badge/version-0.1.1-blue)
 
 A mod for the Claude Code CLI that shows what each running subagent runs on. Claude Code's agent list names a subagent and its task but not its model, effort or context. Claude-Spotter lists them under the prompt, just above that list, and raises a toast when one starts.
 
@@ -21,6 +21,7 @@ A mod for the Claude Code CLI that shows what each running subagent runs on. Cla
 - **A toast on spawn:** `Claude-Spotter: Explore → Sonnet 5.5 ·medium`, a moment after the subagent starts, once its first request has told its effort.
 - **Bar styles** (`/spotter`): the same 16 styles and widths as [claudepeeker](https://github.com/AndreaChiacchia/claude-peeker).
 - **Colors follow the fill:** green below 50%, yellow from 50%, red from 80%.
+- **Quieter than the status line:** the model and effort use claudepeeker's amber and cyan, muted and not bold, so the main session's line stays the brightest.
 - **Works with claudepeeker:** its status line stays right under the hint line, and the subagent rows go below it.
 
 ## Install
