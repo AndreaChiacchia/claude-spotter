@@ -1,6 +1,6 @@
 # Claude-Spotter
 
-![version](https://img.shields.io/badge/version-0.1.1-blue)
+![version](https://img.shields.io/badge/version-0.1.2-blue)
 
 A mod for the Claude Code CLI that shows what each running subagent runs on. Claude Code's agent list names a subagent and its task but not its model, effort or context. Claude-Spotter lists them under the prompt, just above that list, and raises a toast when one starts.
 
