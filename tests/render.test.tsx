@@ -103,6 +103,11 @@ test('the hint line gains a titled row per live subagent, filled in as it runs',
   const name = await (await $.ui.mount(HINT)).find({ type: 'Text', text: /^Plan$/ })
   expect(JSON.stringify(name)).toContain('dimColor')
   expect(JSON.stringify(name)).not.toContain('bold')
+  // The model and effort: claudepeeker's hues muted, not bold, a step below its line.
+  const model = JSON.stringify(await (await $.ui.mount(HINT)).find({ type: 'Text', text: 'Sonnet 5.5' }))
+  expect(model).toContain('#d7af5f')
+  expect(model).not.toContain('bold')
+  expect(JSON.stringify(await (await $.ui.mount(HINT)).find({ type: 'Text', text: ' ·low' }))).toContain('#5fafaf')
 })
 
 test('a toast a moment after the spawn names the agent, its model and effort', async ($, on) => {

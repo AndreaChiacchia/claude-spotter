@@ -3,8 +3,9 @@
 import type { AgentStat, BarPref } from '../types'
 import { drawBar, styleOf } from './styles'
 
-export const ORANGE = '#ffaf00'
-export const CYAN = '#00ffff'
+// claudepeeker's amber and cyan, muted (xterm 179 and 73): the same hues, a step below its line.
+export const GOLD = '#d7af5f'
+export const TEAL = '#5fafaf'
 export const RED = '#ff0000'
 export const GRAY = '#585858'
 
@@ -63,11 +64,11 @@ function effortLabel(effort: AgentStat['effort']): string | null {
   return typeof effort === 'number' ? `${formatTokens(effort)} think` : effort
 }
 
-/** `Sonnet 5.5 ·low`, in claudepeeker's colors for the main session's model. */
+/** `Sonnet 5.5 ·low`, in muted claudepeeker colors, not bold: below the main session's model. */
 export function modelSegments(model: string, effort: AgentStat['effort']): Segment[] {
-  const out: Segment[] = [{ text: modelLabel(model), color: ORANGE, bold: true }]
+  const out: Segment[] = [{ text: modelLabel(model), color: GOLD }]
   const label = effortLabel(effort)
-  if (label) out.push({ text: ` ·${label}`, color: CYAN, bold: true })
+  if (label) out.push({ text: ` ·${label}`, color: TEAL })
 
   return out
 }
