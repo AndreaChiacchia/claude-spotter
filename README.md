@@ -46,7 +46,7 @@ Or load it for a single session with `claude --plugin-dir <path to this folder>`
 |---|---|
 | `/spotter` | Open the bar style panel |
 
-The panel previews the bar at each color. Click `‹` or `›` to step its style or width.
+The panel previews the bar. Click `‹` or `›` to step its style or width.
 
 ## How it works
 

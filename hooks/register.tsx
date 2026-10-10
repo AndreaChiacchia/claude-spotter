@@ -8,8 +8,8 @@ import { DEFAULT_BAR, STYLES, WIDTHS, normalizeBar, styleOf } from './styles'
 
 const PANE = 'spotter-bar'
 const STORE_KEY = 'bar'
-/** The fills the panel previews the bar at: one per tone. */
-const PREVIEWS = [25, 60, 90]
+/** The fill the panel previews the bar at. */
+const PREVIEW = 40
 /** The agent states the hint line lists: started and not yet ended. */
 const LIVE: readonly AgentStatus[] = ['pending', 'running', 'waiting']
 /** How long after the spawn the toast waits, so the subagent's first request has told its effort. */
@@ -149,7 +149,7 @@ export const register: Register = on => {
     return { text: 'Opened the subagent bar panel.' }
   })
 
-  // The panel: the bar at each tone, and ‹ › arrows stepping its style and width.
+  // The panel: the bar previewed once, and ‹ › arrows stepping its style and width.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const pref = await read($, bar)
@@ -168,8 +168,8 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row" flexWrap="wrap" columnGap={3} marginBottom={1}>
-          {PREVIEWS.map(percent => run(Text, [{ text: 'ctx ' }, ...barSegments(pref, percent)]))}
+        <Box flexDirection="row" marginBottom={1}>
+          {run(Text, [{ text: 'ctx ' }, ...barSegments(pref, PREVIEW)])}
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
           {stepper('style', style.name, by => saveBar($, old => ({ ...old, style: cycle(STYLES, style, by).id })))}
