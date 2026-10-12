@@ -1,6 +1,6 @@
 # Claude-Spotter
 
-![version](https://img.shields.io/badge/version-0.1.2-blue)
+![version](https://img.shields.io/badge/version-0.1.3-blue)
 
 A mod for the Claude Code CLI that shows what each running subagent runs on. Claude Code's agent list names a subagent and its task but not its model, effort or context. Claude-Spotter lists them under the prompt, just above that list, and raises a toast when one starts.
 
@@ -11,8 +11,8 @@ A mod for the Claude Code CLI that shows what each running subagent runs on. Cla
   esc to interrupt
   [Opus 5.5 ·high] · mods/main · ctx (1M) ▰▰▱▱▱ 29% · 5h (2h13m) █░░░░ 10% · wk (6d17h) █░░░░ 1%
   subagents
-   ├ Sonnet 5.5 ·medium · Explore · ctx (200K) ▰▱▱▱▱ 12%
-   └ Haiku 5.5 ·low · general-purpose · ctx (200K) ▰▰▱▱▱ 38%
+   ├ Sonnet 5.5 ·medium · Explore · ctx (1M) ▰▱▱▱▱ 12%
+   └ Haiku 5.5 ·low · general-purpose · ctx (1M) ▰▰▱▱▱ 38%
 ```
 
 ## Features
@@ -58,7 +58,7 @@ The panel previews the bar. Click `‹` or `›` to step its style or width.
 ## Limitations
 
 - **Above the agent list, not in it.** The mod API has no hook into Claude Code's own agent list, so the rows go in the hint line slot just above it.
-- **The context window is a best guess.** The API reports the window for the main model only. A subagent on a `[1m]` model counts as 1M, one on the main session's model gets the main window, and any other gets 200K.
+- **The context window is a best guess.** The API reports the window for the main model only. A subagent on a `[1m]` model counts as 1M, one on the main session's model gets the main window, one on an Opus, Fable, Sonnet or Haiku model gets 1M, and any other gets 200K. A subagent whose tokens pass the window it was given counts as 1M.
 
 ## Development
 
