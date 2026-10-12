@@ -27,9 +27,12 @@ export function tone(percent: number): Tone {
 
 const bare = (model: string) => model.replace(/\[[^\]]*\]$/, '').trim()
 
+/** `claude-<family>-<major>[-<minor>][-<date>]`, with any `[...]` taken off. */
+const MODEL_ID = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/i
+
 /** `claude-opus-5-5[1m]` -> `Opus 5.5`; a name already shown as a display name passes through. */
 export function modelLabel(model: string): string {
-  const id = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/i.exec(bare(model))
+  const id = MODEL_ID.exec(bare(model))
   if (!id) return bare(model) || 'unknown'
   const family = id[1]!.charAt(0).toUpperCase() + id[1]!.slice(1).toLowerCase()
 
@@ -47,15 +50,34 @@ export function formatTokens(n: number): string {
   return String(n)
 }
 
+/** The window a `[1m]` id, or a model in `ONE_M_FAMILIES`, takes. */
+export const ONE_M_WINDOW = 1_000_000
+
+/** The model families whose window is 1M with no `[1m]` on the id. */
+const ONE_M_FAMILIES = new Set(['opus', 'fable', 'sonnet', 'haiku'])
+
+function knownOneM(model: string): boolean {
+  const family = MODEL_ID.exec(bare(model))?.[1]?.toLowerCase()
+
+  return family !== undefined && ONE_M_FAMILIES.has(family)
+}
+
 /**
  * A subagent's context window, which the API gives for the main model alone:
- * 1M for a `[1m]` id, the main session's for the main model, else the default.
+ * 1M for a `[1m]` id, the main session's for the main model, 1M for a model
+ * known to take it, else the default. Tokens past the window it settled on
+ * mean the window is larger: 1M.
  */
-export function windowFor(model: string, main: { model: string; window: number }): number {
-  if (/\[1m\]$/i.test(model)) return 1_000_000
-  if (main.window > 0 && bare(model) === bare(main.model)) return main.window
+export function windowFor(model: string, main: { model: string; window: number }, tokens: number | null = null): number {
+  const window = /\[1m\]$/i.test(model)
+    ? ONE_M_WINDOW
+    : main.window > 0 && bare(model) === bare(main.model)
+      ? main.window
+      : knownOneM(model)
+        ? ONE_M_WINDOW
+        : DEFAULT_WINDOW
 
-  return DEFAULT_WINDOW
+  return tokens !== null && tokens > window ? Math.max(window, ONE_M_WINDOW) : window
 }
 
 function effortLabel(effort: AgentStat['effort']): string | null {

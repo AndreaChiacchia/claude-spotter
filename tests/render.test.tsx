@@ -98,7 +98,7 @@ test('the hint line gains a titled row per live subagent, filled in as it runs',
   await spawn($)
   expect(await hint($)).toBe(`${ENGINE}subagents └ Sonnet 5.5 · Plan`)
   await step($, 'claude-sonnet-5-5', 'low')
-  expect(await hint($)).toBe(`${ENGINE}subagents └ Sonnet 5.5 ·low · Plan · ctx (200K) ▰▰▱▱▱ 38%`)
+  expect(await hint($)).toBe(`${ENGINE}subagents └ Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8%`)
   // The agent's name is plain dim text, as claudepeeker draws the branch.
   const name = await (await $.ui.mount(HINT)).find({ type: 'Text', text: /^Plan$/ })
   expect(JSON.stringify(name)).toContain('dimColor')

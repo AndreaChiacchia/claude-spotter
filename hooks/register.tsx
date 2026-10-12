@@ -115,7 +115,7 @@ export const register: Register = on => {
       const model = Object.values(spawned).find(s => s.agentId === agent.id)?.model
       const stat: AgentStat | undefined = all[agent.id] ?? (model ? { model, effort: null, tokens: null } : undefined)
       const figures = stat
-        ? lineSegments(stat, agent.type, windowFor(stat.model, { model: mainModel, window: usage.context.window }), pref)
+        ? lineSegments(stat, agent.type, windowFor(stat.model, { model: mainModel, window: usage.context.window }, stat.tokens), pref)
         : [{ text: agent.type }, { text: ' · starting…' }]
       // A tree under the title: `├` for each row but the last, `└` for the last.
       const branch = i === live.length - 1 ? ' └ ' : ' ├ '
