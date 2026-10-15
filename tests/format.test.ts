@@ -1,6 +1,16 @@
 import { expect, test } from 'claude-code/testing'
 
-import { lineSegments, modelLabel, windowFor } from '../hooks/format'
+import {
+  finishToast,
+  formatElapsed,
+  lineSegments,
+  modelLabel,
+  plainRowSegments,
+  shortTool,
+  windowFor,
+  wordForReason,
+  wordForStatus,
+} from '../hooks/format'
 import { DEFAULT_BAR } from '../hooks/styles'
 
 const text = (segments: { text: string }[]) => segments.map(s => s.text).join('')
@@ -43,4 +53,46 @@ test('the line: model and effort, the agent, then the context once a response ca
   expect(text(lineSegments({ ...stat, effort: null, tokens: 0 }, 'Plan', 200_000, DEFAULT_BAR))).toBe(
     'Sonnet 5.5 · Plan · ctx (200K) ▱▱▱▱▱ 0%',
   )
+})
+
+test('the elapsed time: seconds, minutes and seconds, hours and minutes', () => {
+  expect(formatElapsed(0)).toBe('0s')
+  expect(formatElapsed(42_000)).toBe('42s')
+  expect(formatElapsed(59_999)).toBe('59s')
+  expect(formatElapsed(72_000)).toBe('1m12s')
+  expect(formatElapsed(65_000)).toBe('1m05s')
+  expect(formatElapsed(3_720_000)).toBe('1h02m')
+})
+
+test('a tool name is cut to its last part and ten characters', () => {
+  expect(shortTool('mcp__gh__issue')).toBe('issue')
+  expect(shortTool('Grep')).toBe('Grep')
+  expect(shortTool('mcp__gh__a_very_long_tool')).toBe('a_very_lon')
+  expect(shortTool('')).toBe('tool')
+})
+
+test('how a subagent ended reads as done, stopped or failed', () => {
+  expect(wordForReason('answer')).toBe('done')
+  expect(wordForReason('aborted')).toBe('stopped')
+  expect(wordForReason('refusal')).toBe('failed')
+  expect(wordForReason('error')).toBe('failed')
+  expect(wordForStatus('completed')).toBe('done')
+  expect(wordForStatus('idle')).toBe('done')
+  expect(wordForStatus('killed')).toBe('stopped')
+  expect(wordForStatus('failed')).toBe('failed')
+})
+
+test('the finish toast names the agent, how it ended, how long and its last context', () => {
+  expect(finishToast('Explore', 'done', 42_000, 63_000)).toBe('Claude-Spotter: Explore done · 42s · 63K')
+  expect(finishToast('Plan', 'stopped', 5_000, null)).toBe('Claude-Spotter: Plan stopped · 5s')
+})
+
+test('the plain row: the dot, the line, the context tokens, then the elapsed time or the finish', () => {
+  const stat = { model: 'claude-sonnet-5-5', effort: 'low', tokens: 76_000 }
+  const row = { dot: 'running', stat, type: 'Plan', window: 200_000, bar: DEFAULT_BAR, elapsedMs: 12_000, finish: null } as const
+  expect(text(plainRowSegments(row))).toBe('● Sonnet 5.5 ·low · Plan · ctx (200K) ▰▰▱▱▱ 38% · 76K · 12s')
+  expect(
+    text(plainRowSegments({ ...row, dot: 'done', finish: { word: 'done', durationMs: 42_000 } })),
+  ).toBe('● Sonnet 5.5 ·low · Plan · ctx (200K) ▰▰▱▱▱ 38% · 76K ✦ done · 42s')
+  expect(text(plainRowSegments({ ...row, dot: 'pending', stat: undefined, elapsedMs: 0 }))).toBe('◌ Plan · starting… · 0s')
 })

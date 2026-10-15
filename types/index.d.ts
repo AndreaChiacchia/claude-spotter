@@ -1,5 +1,8 @@
 export type BarPref = { style: string; width: number }
 
+/** How much the rows move: `lively`, `subtle`, or not at all. */
+export type Motion = 'lively' | 'subtle' | 'off'
+
 /** What a subagent's last model request ran on, and how full its context was. */
 export type AgentStat = {
   model: string
@@ -10,7 +13,13 @@ export type AgentStat = {
 }
 
 /** One Agent call: the subagent it started, and the model the spawn resolved. */
-export type Spawn = { agentId: string; type: string; model: string }
+export type Spawn = {
+  agentId: string
+  type: string
+  model: string
+  /** When the spawn settled (ms since the epoch); absent on a record written before it existed. */
+  startedAt?: number
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -20,6 +29,7 @@ declare module 'claude-code' {
       /** By the subagent's id. */
       stats: Record<string, AgentStat>
       bar: BarPref
+      motion: Motion
     }
   }
 }

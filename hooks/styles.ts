@@ -1,6 +1,6 @@
 // The progress bar styles, each drawn as runs of fill, track and frame text (claudepeeker's set).
 
-import type { BarPref } from '../types'
+import type { BarPref, Motion } from '../types'
 
 export type BarPart = { kind: 'fill' | 'track' | 'frame'; text: string }
 
@@ -90,6 +90,12 @@ export const WIDTHS: readonly number[] = [3, 4, 5, 6, 8, 10, 12, 15, 20]
 
 export const DEFAULT_BAR: BarPref = { style: 'parallelogram', width: 5 }
 
+export const MOTIONS: readonly Motion[] = ['lively', 'subtle', 'off']
+
+export const MOTION_LABELS: Record<Motion, string> = { lively: 'Lively', subtle: 'Subtle', off: 'Off' }
+
+export const DEFAULT_MOTION: Motion = 'lively'
+
 export function styleOf(id: string): BarStyle {
   return STYLES.find(style => style.id === id) ?? STYLES[0]!
 }
@@ -105,4 +111,9 @@ export function normalizeBar(raw: unknown): BarPref {
   const width = typeof one.width === 'number' && WIDTHS.includes(one.width) ? one.width : DEFAULT_BAR.width
 
   return { style, width }
+}
+
+/** A stored motion read back over the default. */
+export function normalizeMotion(raw: unknown): Motion {
+  return MOTIONS.find(m => m === raw) ?? DEFAULT_MOTION
 }

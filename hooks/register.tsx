@@ -1,27 +1,85 @@
 import { atom, read, update } from 'claude-code'
-import type { AgentStatus, Elements, EngineInterface, Register } from 'claude-code'
+import type { AgentStatus, Elements, EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
-import type { AgentStat, BarPref } from '../types'
-import { barSegments, lineSegments, modelLabel, windowFor } from './format'
-import type { Segment } from './format'
-import { DEFAULT_BAR, STYLES, WIDTHS, normalizeBar, styleOf } from './styles'
+import type { AgentStat, BarPref, Motion } from '../types'
+import { encodeCells } from './cells'
+import type { Cell } from './cells'
+import { DEMO_END_MS, DEMO_TICK_MS, DEMO_WINDOW, demoRowsAt, demoToolsAt, isDemoChangeAt } from './demo'
+import {
+  DEFAULT_WINDOW,
+  barSegments,
+  ctxPercent,
+  finishToast,
+  formatElapsed,
+  labelSegments,
+  modelLabel,
+  plainRowSegments,
+  tone,
+  windowFor,
+  wordForReason,
+  wordForStatus,
+} from './format'
+import type { DotState, FinishWord, Segment } from './format'
+import {
+  FINISH_MS,
+  FRAME_MS,
+  advance,
+  composeBar,
+  createMotion,
+  isActive,
+  observe,
+  pruneMotion,
+  startFade,
+} from './motion'
+import type { MotionState } from './motion'
+import { composeDot, composeTail, flashTool, markDone, tailWidth, toolSlot } from './row'
+import {
+  DEFAULT_BAR,
+  DEFAULT_MOTION,
+  MOTIONS,
+  MOTION_LABELS,
+  STYLES,
+  WIDTHS,
+  normalizeBar,
+  normalizeMotion,
+  styleOf,
+} from './styles'
 
 const PANE = 'spotter-bar'
 const STORE_KEY = 'bar'
+const MOTION_KEY = 'motion'
 /** The fill the panel previews the bar at. */
 const PREVIEW = 40
 /** The agent states the hint line lists: started and not yet ended. */
 const LIVE: readonly AgentStatus[] = ['pending', 'running', 'waiting']
 /** How long after the spawn the toast waits, so the subagent's first request has told its effort. */
 const TOAST_DELAY_MS = 1500
+/** How long after a subagent ends its finish toast waits, so it is not raised from inside the subagent's loop. */
+const FINISH_TOAST_DELAY_MS = 100
+/** The plain rows redraw this often while a subagent lives, so the elapsed time ticks. */
+const ELAPSED_TICK_MS = 1000
+/** The Raster keys are this prefix, the part and the agent id; never claudepeeker's or claudeticker's. */
+const RASTER_PREFIX = 'spotter-'
+/** Fresh draws whose first blit was refused before the rows are drawn still. */
+const MAX_REFUSED_MOUNTS = 3
+/** Columns the hint slot is indented by. */
+const HINT_INDENT = 2
+/** The width assumed when the surface has not measured. */
+const DEFAULT_COLUMNS = 80
 
 const spawns = atom({ plugin: 'claudespotter', key: 'spawns' } as const, {})
 const stats = atom({ plugin: 'claudespotter', key: 'stats' } as const, {})
 const bar = atom({ plugin: 'claudespotter', key: 'bar' } as const, DEFAULT_BAR)
+const motionPref = atom({ plugin: 'claudespotter', key: 'motion' } as const, DEFAULT_MOTION)
 
 async function saveBar($: EngineInterface, change: (b: BarPref) => BarPref): Promise<void> {
   await update($, bar, change)
   await $.store.set(STORE_KEY, await read($, bar))
+}
+
+async function saveMotion($: EngineInterface, change: (m: Motion) => Motion): Promise<void> {
+  await update($, motionPref, change)
+  await $.store.set(MOTION_KEY, await read($, motionPref))
 }
 
 /** The item `by` steps from `at`, wrapping round the list. */
@@ -31,14 +89,215 @@ function cycle<T>(list: readonly T[], at: T, by: 1 | -1): T {
   return list[(i + by + list.length) % list.length] ?? at
 }
 
+// State of the running module. It is lost on a reload by design: the next render rebuilds it.
+// `register` resets it, so a module instance shared by several loads starts each one clean.
+let motion: MotionState = createMotion()
+let level: Motion = 'lively'
+let timer: Timer | null = null
+/** Redraws the plain rows once a second while a subagent lives. */
+let stillTimer: Timer | null = null
+let isBlitting = false
+/** One Raster of a row: its key, its width at the render, and its cells at a moment (ms on the demo or the real clock). */
+type Piece = { key: string; width: number; compose: (now: number) => Cell[] }
+/** The mounted Rasters the timer repaints: the render's request, each piece, the real agents drawn and whether any lives. */
+type Site = { requestId: string; pieces: Piece[]; ids: Set<string>; hasLive: boolean }
+let site: Site | null = null
+/** What each Raster last showed (by key), so an unchanged frame is not sent again. */
+const lastBlit = new Map<string, string>()
+/** Blits accepted since the last render that drew the Rasters. */
+let framesSinceMount = 0
+/** Fresh draws whose first blit was refused, while no blit has ever been accepted. */
+let refusedMounts = 0
+let everBlitted = false
+/** Set when this slot keeps refusing the first blit: the rows are drawn still from then on. */
+let isStaticFallback = false
+/** The running `/spotter demo`: counted in its own ticks, so it is deterministic. */
+type Demo = { ticks: number; timer: Timer }
+let demo: Demo | null = null
+/** False until a render has drawn: a bar that appears after that enters with its effects, the first ones are taken silently. */
+let primed = false
+/** When each live subagent was first listed (ms), for one with no start time on its spawn record. */
+const firstSeen = new Map<string, number>()
+/** How each subagent that ended ended, and when. */
+const ends = new Map<string, { at: number; word: FinishWord; durationMs: number }>()
+/** Subagents seen live: only these get a done mark when they leave the live states. */
+const seenLive = new Set<string>()
+/** Subagents whose exit redraw is already timed. */
+const exitScheduled = new Set<string>()
+
+function stopTimer(): void {
+  timer?.cancel()
+  timer = null
+}
+
+function stopStill(): void {
+  stillTimer?.cancel()
+  stillTimer = null
+}
+
+function ensureStill($: EngineInterface): void {
+  if (stillTimer === null) stillTimer = $.clock.every(ELAPSED_TICK_MS, () => $.ui.invalidate('ui.render'))
+}
+
+/** Forgets what the module knows of the rows (a load, a new session, a demo's start or end). */
+function silenceRows(): void {
+  motion = createMotion()
+  stopTimer()
+  site = null
+}
+
+function endDemo($: EngineInterface): void {
+  if (demo === null) return
+  demo.timer.cancel()
+  demo = null
+  silenceRows()
+  // The real rows come back silently.
+  primed = false
+  $.ui.invalidate('ui.render')
+}
+
+function onDemoTick($: EngineInterface): void {
+  if (demo === null) return
+  demo.ticks += 1
+  const ms = demo.ticks * DEMO_TICK_MS
+  if (ms >= DEMO_END_MS) {
+    endDemo($)
+
+    return
+  }
+  if (level !== 'off') {
+    for (const call of demoToolsAt(ms)) flashTool(motion, call.id, call.tool)
+    kick($)
+  }
+  if (isDemoChangeAt(ms)) $.ui.invalidate('ui.render')
+}
+
+/** Starts the demo, or restarts it from the beginning when one runs. */
+async function startDemo($: EngineInterface): Promise<void> {
+  demo?.timer.cancel()
+  demo = { ticks: 0, timer: $.clock.every(DEMO_TICK_MS, () => onDemoTick($)) }
+  silenceRows()
+  // The demo's rows enter with their effects.
+  primed = true
+  $.ui.invalidate('ui.render')
+}
+
+/** True while there are rows to repaint and something to move in them: a live row, or an effect before its end. */
+function needsTimer(): boolean {
+  return site !== null && !isStaticFallback && level !== 'off' && (site.hasLive || isActive(motion))
+}
+
+function kick($: EngineInterface): void {
+  if (timer === null && needsTimer()) timer = $.clock.every(FRAME_MS, () => void step($))
+}
+
+/** One frame: the motion advances and each row's Rasters are repainted in place. */
+async function step($: EngineInterface): Promise<void> {
+  if (isBlitting || site === null) return
+  isBlitting = true
+  try {
+    const target = site
+    if (level === 'off') {
+      stopTimer()
+
+      return
+    }
+    advance(motion)
+    const now = demo !== null ? demo.ticks * DEMO_TICK_MS : await $.clock.now()
+    // A render replaced the site while the clock was read: its own mount is the newer frame; the timer goes on.
+    if (site !== target) return
+    for (const piece of target.pieces) {
+      const cells = piece.compose(now)
+      if (cells.length !== piece.width) {
+        // A width change (9% to 10%, a badge appearing or leaving, 9s to 10s) is a redraw, never a blit.
+        stopTimer()
+        $.ui.invalidate('ui.render')
+
+        return
+      }
+      const encoded = encodeCells(cells)
+      if (encoded === lastBlit.get(piece.key)) continue
+      const r = await $.ui.blit({ requestId: target.requestId, key: piece.key, cells: encoded })
+      if (r.deny === undefined) {
+        everBlitted = true
+        framesSinceMount += 1
+        lastBlit.set(piece.key, encoded)
+      } else if (framesSinceMount === 0 && !everBlitted) {
+        // The first blit after a fresh draw was refused: this slot may not take blits. A fresh mount retries.
+        refusedMounts += 1
+        stopTimer()
+        if (refusedMounts >= MAX_REFUSED_MOUNTS) {
+          isStaticFallback = true
+          site = null
+        }
+        $.ui.invalidate('ui.render')
+
+        return
+      } else {
+        // Refused after earlier successes (a dialog, a resize, the prompt hidden): a later render restarts the timer.
+        stopTimer()
+
+        return
+      }
+      if (site !== target) return
+    }
+    if (!needsTimer()) stopTimer()
+  } finally {
+    isBlitting = false
+  }
+}
+
+/** One subagent row as the render reads it. */
+type RowData = {
+  id: string
+  type: string
+  dot: DotState
+  stat: AgentStat | undefined
+  window: number
+  /** When the subagent started (ms, on the clock the render uses). */
+  startAt: number
+  finish: { word: FinishWord; durationMs: number; at: number } | null
+}
+
 export const register: Register = on => {
+  // A fresh load starts from a clean state.
+  stopTimer()
+  stopStill()
+  demo?.timer.cancel()
+  demo = null
+  motion = createMotion()
+  level = 'lively'
+  isBlitting = false
+  site = null
+  lastBlit.clear()
+  framesSinceMount = 0
+  refusedMounts = 0
+  everBlitted = false
+  isStaticFallback = false
+  primed = false
+  firstSeen.clear()
+  ends.clear()
+  seenLive.clear()
+  exitScheduled.clear()
+
   on('session.start', async ($, e, next) => {
     const stored = await $.store.get(STORE_KEY)
     if (stored !== undefined) await update($, bar, () => normalizeBar(stored))
+    const storedMotion = await $.store.get(MOTION_KEY)
+    if (storedMotion !== undefined) await update($, motionPref, () => normalizeMotion(storedMotion))
     await $.command.register({
       name: 'spotter',
-      description: "Pick the style and width of the subagents' context bar",
+      description: "Pick the style and width of the subagents' context bar, and how the rows move",
+      argumentHint: '[demo | demo stop]',
     })
+    // A /clear or a resume ends a demo and starts the rows over: what appears next is taken silently.
+    endDemo($)
+    silenceRows()
+    primed = false
+    firstSeen.clear()
+    ends.clear()
+    seenLive.clear()
+    exitScheduled.clear()
 
     return next(e)
   })
@@ -51,9 +310,10 @@ export const register: Register = on => {
     const result = await next(e)
     const agentId = result.agentId
     if (e.workflow || 'deny' in result || agentId === undefined) return result
+    const startedAt = await $.clock.now()
     await update($, spawns, all => ({
       ...all,
-      [e.tool_use_id]: { agentId, type: e.subagentType, model: result.model },
+      [e.tool_use_id]: { agentId, type: e.subagentType, model: result.model, startedAt },
     }))
     const type = e.subagentType
     $.clock.after(TOAST_DELAY_MS, async () => {
@@ -87,72 +347,313 @@ export const register: Register = on => {
     return result
   })
 
-  // A subagent that ends changes no state the hint line reads: redraw it.
-  on('turn.complete', ($, e, next) => {
-    if (e.agentId !== undefined) $.ui.invalidate('ui.render')
+  // A subagent that runs again after it ended is a live row again: its end is forgotten, and its bar starts over.
+  on('turn.start', ($, e, next) => {
+    const id = e.agentId
+    if (id !== undefined && ends.has(id)) {
+      ends.delete(id)
+      exitScheduled.delete(id)
+      motion.bars.delete(id)
+      motion.rows.delete(id)
+      $.ui.invalidate('ui.render')
+    }
 
     return next(e)
   })
+
+  // A subagent that ends: its row shows how it ended for a moment, and a toast says so. The row's dot and bar
+  // follow in the render, which reads `ends`.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    const id = e.agentId
+    if (id === undefined) return result
+    const now = await $.clock.now()
+    const spawn = Object.values(await read($, spawns)).find(s => s.agentId === id)
+    const start = spawn?.startedAt ?? firstSeen.get(id) ?? now - e.durationMs
+    const word = wordForReason(e.reason)
+    const durationMs = Math.max(0, now - start)
+    ends.set(id, { at: now, word, durationMs })
+    if (spawn !== undefined) {
+      const tokens = (await read($, stats))[id]?.tokens ?? null
+      // Raised on a timer, as the spawn toast, so it is not raised from inside the subagent's loop.
+      $.clock.after(FINISH_TOAST_DELAY_MS, () => $.ui.toast(finishToast(spawn.type, word, durationMs, tokens)))
+    }
+    $.ui.invalidate('ui.render')
+
+    return result
+  }).catch(($, e, next) => next(e))
+
+  // Each tool call of a subagent flashes its name at the end of its row. A pass-through: nothing awaited before `next`, `e` untouched.
+  on('tool.call', ($, e, next) => {
+    if (e.agentId !== undefined && level !== 'off' && demo === null && site?.ids.has(e.agentId)) {
+      flashTool(motion, e.agentId, e.tool)
+      kick($)
+    }
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // The hint line under the prompt, kept as what is drawn beneath (the engine's
   // line, and claudepeeker's when it sits beneath), with a titled row per live
   // subagent last: the nearest a mod draws to the footer's agent list. No padding:
   // the hint slot is indented already.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    const [agents, all, spawned, pref, usage, mainModel] = await Promise.all([
+    const [agents, all, spawned, pref, motionSetting, usage, mainModel, clockNow] = await Promise.all([
       $.agent.list(),
       read($, stats),
       read($, spawns),
       read($, bar),
+      read($, motionPref),
       $.session.usage(),
       $.session.model(),
+      $.clock.now(),
     ])
-    const live = agents.filter(a => LIVE.includes(a.status) && !a.teammateId)
-    if (live.length === 0) return next(e)
+    level = motionSetting
+    // The module's memory follows the agents the engine lists.
+    const listed = new Set(agents.map(a => a.id))
+    for (const id of [...firstSeen.keys()]) if (!listed.has(id)) firstSeen.delete(id)
+    for (const id of [...ends.keys()]) if (!listed.has(id)) ends.delete(id)
+    for (const id of [...seenLive]) if (!listed.has(id)) seenLive.delete(id)
+    for (const id of [...exitScheduled]) if (!listed.has(id)) exitScheduled.delete(id)
+
+    // The rows: a running demo's made-up subagents, else the real ones in list order.
+    let now = clockNow
+    const data: RowData[] = []
+    if (demo !== null) {
+      now = demo.ticks * DEMO_TICK_MS
+      for (const r of demoRowsAt(now)) {
+        data.push({
+          id: r.id,
+          type: r.type,
+          dot: r.status === 'completed' ? 'done' : r.status,
+          stat: { model: r.model, effort: r.effort, tokens: r.tokens },
+          window: DEMO_WINDOW,
+          startAt: r.startedAt,
+          finish:
+            r.finishedAt === null ? null : { word: 'done', durationMs: r.finishedAt - r.startedAt, at: r.finishedAt },
+        })
+      }
+    } else {
+      for (const agent of agents) {
+        if (agent.teammateId) continue
+        const id = agent.id
+        const spawn = Object.values(spawned).find(s => s.agentId === id)
+        const startOf = (): number | undefined => spawn?.startedAt ?? firstSeen.get(id)
+        let end = ends.get(id)
+        let dot: DotState
+        let finish: RowData['finish'] = null
+        if (LIVE.includes(agent.status) && end === undefined) {
+          seenLive.add(id)
+          if (!firstSeen.has(id)) firstSeen.set(id, now)
+          dot = agent.status === 'pending' ? 'pending' : agent.status === 'waiting' ? 'waiting' : 'running'
+        } else {
+          if (end === undefined && seenLive.has(id)) {
+            end = { at: now, word: wordForStatus(agent.status), durationMs: now - (startOf() ?? now) }
+            ends.set(id, end)
+          }
+          if (end === undefined || now - end.at >= FINISH_MS) continue
+          dot = 'done'
+          finish = end
+          if (!exitScheduled.has(id)) {
+            exitScheduled.add(id)
+            $.clock.after(Math.max(0, FINISH_MS - (now - end.at)), () => $.ui.invalidate('ui.render'))
+          }
+        }
+        const model = spawn?.model
+        const stat: AgentStat | undefined = all[id] ?? (model ? { model, effort: null, tokens: null } : undefined)
+        data.push({
+          id,
+          type: agent.type,
+          dot,
+          stat,
+          window: stat
+            ? windowFor(stat.model, { model: mainModel, window: usage.context.window }, stat.tokens)
+            : DEFAULT_WINDOW,
+          startAt: startOf() ?? now,
+          finish,
+        })
+      }
+    }
+
+    if (data.length === 0) {
+      stopTimer()
+      stopStill()
+      site = null
+      pruneMotion(motion, new Set())
+      primed = true
+
+      return next(e)
+    }
     const drawn = await next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const rows = live.map((agent, i) => {
-      const model = Object.values(spawned).find(s => s.agentId === agent.id)?.model
-      const stat: AgentStat | undefined = all[agent.id] ?? (model ? { model, effort: null, tokens: null } : undefined)
-      const figures = stat
-        ? lineSegments(stat, agent.type, windowFor(stat.model, { model: mainModel, window: usage.context.window }, stat.tokens), pref)
-        : [{ text: agent.type }, { text: ' · starting…' }]
-      // A tree under the title: `├` for each row but the last, `└` for the last.
-      const branch = i === live.length - 1 ? ' └ ' : ' ├ '
+    // Off, a non-terminal surface and a slot that refuses blits read every value silently and draw the plain rows.
+    const moving = level !== 'off' && e.surface === 'terminal' && !isStaticFallback ? level : null
 
-      return (
+    // A changed value starts the bars' effects; a render alone never does.
+    for (const r of data) {
+      const tokens = r.stat?.tokens
+      if (tokens != null) {
+        // A subagent that lives again after a finish starts a bar of its own.
+        if (r.finish === null && motion.bars.get(r.id)?.fade != null) {
+          motion.bars.delete(r.id)
+          motion.rows.delete(r.id)
+        }
+        observe(motion, r.id, { percent: ctxPercent(tokens, r.window), tokens }, pref, moving ?? 'off', primed)
+      }
+      if (moving !== null && r.finish !== null) {
+        startFade(motion, r.id)
+        markDone(motion, r.id)
+      }
+    }
+    pruneMotion(motion, new Set(data.map(r => r.id)))
+
+    const title = (
+      <Box flexDirection="row">
+        <Text dimColor bold>
+          subagents
+        </Text>
+      </Box>
+    )
+    // A tree under the title: `├` for each row but the last, `└` for the last.
+    const branchOf = (i: number) => (i === data.length - 1 ? ' └ ' : ' ├ ')
+
+    let rows: RenderNode[]
+    if (moving !== null && e.surface === 'terminal') {
+      // Only the terminal surface has a Raster: narrowing `e` here narrows what `resolve` returns.
+      const { Raster } = $.ui.resolve(e)
+      stopStill()
+      const cols = Math.min(512, (e.viewport?.columns ?? DEFAULT_COLUMNS) - HINT_INDENT)
+      const pieces: Piece[] = []
+      lastBlit.clear()
+      rows = data.map((r, i) => {
+        const label: Segment[] = [{ text: ' ' }, ...labelSegments(r.stat, r.type, r.window)]
+        const labelWidth = label.reduce((n, s) => n + Array.from(s.text).length, 0)
+        const tokens = r.stat?.tokens ?? null
+        const percent = tokens === null ? null : ctxPercent(tokens, r.window)
+        const dotKey = `${RASTER_PREFIX}dot-${r.id}`
+        const barKey = `${RASTER_PREFIX}bar-${r.id}`
+        const tailKey = `${RASTER_PREFIX}tail-${r.id}`
+
+        const dotCells = composeDot(motion, r.id, r.dot, moving)
+        const dotEncoded = encodeCells(dotCells)
+        pieces.push({ key: dotKey, width: dotCells.length, compose: () => composeDot(motion, r.id, r.dot, moving) })
+        lastBlit.set(dotKey, dotEncoded)
+
+        let barWidth = 0
+        let barEncoded: string | null = null
+        if (tokens !== null) {
+          const barCells = composeBar(motion, r.id, pref, moving)
+          barWidth = barCells.length
+          barEncoded = encodeCells(barCells)
+          pieces.push({ key: barKey, width: barWidth, compose: () => composeBar(motion, r.id, pref, moving) })
+          lastBlit.set(barKey, barEncoded)
+        }
+
+        const finish = r.finish
+        const tail =
+          finish !== null
+            ? ({
+                kind: 'done',
+                word: finish.word,
+                durationMs: finish.durationMs,
+                isLean: percent !== null && tone(percent) === 'ok',
+              } as const)
+            : ({
+                kind: 'live',
+                elapsedMs: now - r.startAt,
+                slot: toolSlot(cols, 3 + 1 + labelWidth + barWidth + 3 + formatElapsed(now - r.startAt).length),
+              } as const)
+        const tailCells = composeTail(motion, r.id, tail, moving)
+        const tailEncoded = encodeCells(tailCells)
+        pieces.push({
+          key: tailKey,
+          width: tailWidth(tail),
+          compose: at =>
+            composeTail(motion, r.id, tail.kind === 'live' ? { ...tail, elapsedMs: at - r.startAt } : tail, moving),
+        })
+        lastBlit.set(tailKey, tailEncoded)
+
+        return (
+          <Box flexDirection="row">
+            <Text dimColor>{branchOf(i)}</Text>
+            <Raster key={dotKey} columns={dotCells.length} rows={1} cells={dotEncoded} />
+            <Text wrap="truncate-end">{run(Text, label)}</Text>
+            {barEncoded === null ? null : <Raster key={barKey} columns={barWidth} rows={1} cells={barEncoded} />}
+            <Raster key={tailKey} columns={tailCells.length} rows={1} cells={tailEncoded} />
+          </Box>
+        )
+      })
+      framesSinceMount = 0
+      site = {
+        requestId: e.requestId,
+        pieces,
+        ids: new Set(demo === null ? data.map(r => r.id) : []),
+        hasLive: data.some(r => r.finish === null),
+      }
+      kick($)
+    } else {
+      stopTimer()
+      site = null
+      rows = data.map((r, i) => (
         <Box flexDirection="row">
           <Text wrap="truncate-end">
-            <Text dimColor>{branch}</Text>
-            {run(Text, figures)}
+            <Text dimColor>{branchOf(i)}</Text>
+            {run(
+              Text,
+              plainRowSegments({
+                dot: r.dot,
+                stat: r.stat,
+                type: r.type,
+                window: r.window,
+                bar: pref,
+                elapsedMs: now - r.startAt,
+                finish: r.finish === null ? null : { word: r.finish.word, durationMs: r.finish.durationMs },
+              }),
+            )}
           </Text>
         </Box>
-      )
-    })
+      ))
+      if (data.some(r => r.finish === null)) ensureStill($)
+      else stopStill()
+    }
+    primed = true
 
     return (
       <Box flexDirection="column">
         {drawn}
-        <Box flexDirection="row">
-          <Text dimColor bold>
-            subagents
-          </Text>
-        </Box>
+        {title}
         {rows}
       </Box>
     )
   })
 
-  on('command.run', { command: 'spotter' }, async $ => {
+  on('command.run', { command: 'spotter' }, async ($, e) => {
+    const arg = e.args.trim()
+    if (arg === 'demo') {
+      await startDemo($)
+      const isOff = (await read($, motionPref)) === 'off'
+
+      return {
+        text:
+          'Playing the motion demo for 20 s under the prompt, with made-up subagents. /spotter demo stop ends it.' +
+          (isOff ? ' Motion is Off, so the rows change without effects: pick Lively or Subtle in /spotter to see them.' : ''),
+      }
+    }
+    if (arg === 'demo stop') {
+      if (demo === null) return { text: 'No demo is running.' }
+      endDemo($)
+
+      return { text: 'Stopped the demo: the rows show your real subagents again.' }
+    }
     await $.ui.open({ id: PANE, title: 'Subagent ctx bar', focus: true, closeOnEscape: true })
 
     return { text: 'Opened the subagent bar panel.' }
   })
 
-  // The panel: the bar previewed once, and ‹ › arrows stepping its style and width.
+  // The panel: the bar previewed once, and ‹ › arrows stepping its style and width, and the motion.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const pref = await read($, bar)
+    const [pref, motionSetting] = await Promise.all([read($, bar), read($, motionPref)])
     const style = styleOf(pref.style)
     const stepper = (key: string, value: string, step: (by: 1 | -1) => void, isOff = false) => (
       <Box flexDirection="row" flexShrink={0}>
@@ -180,6 +681,10 @@ export const register: Register = on => {
             style.isGlyph,
           )}
         </Box>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+          <Text bold>Motion</Text>
+          {stepper('motion', MOTION_LABELS[motionSetting], by => saveMotion($, old => cycle(MOTIONS, old, by)))}
+        </Box>
         <Box flexDirection="row" marginTop={1} columnGap={1}>
           <Button key="reset" onPress={() => saveBar($, () => DEFAULT_BAR)}>
             Reset
@@ -188,7 +693,7 @@ export const register: Register = on => {
             Close
           </Button>
         </Box>
-        <Text dimColor>Click ‹ › to change the bar.</Text>
+        <Text dimColor>Click ‹ › to change the bar or the motion.</Text>
       </Box>
     )
   })
