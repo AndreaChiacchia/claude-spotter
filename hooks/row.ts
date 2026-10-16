@@ -4,7 +4,8 @@ import {
   DEFAULT,
   DOT_FULL,
   DOT_PENDING,
-  DOT_WAITING,
+  DOT_RUNNING,
+  DOT_SPIN,
   HOT,
   LIVE,
   PLAIN,
@@ -21,8 +22,8 @@ import type { Cell } from './cells'
 import { TONES, doneText, formatElapsed, shortTool } from './format'
 import type { DotState, FinishWord } from './format'
 import {
-  DOT_BLINK_FRAMES,
-  DOT_BREATHE_FRAMES,
+  DOT_SPIN_FRAMES,
+  DOT_SPIN_SUBTLE_FRAMES,
   PULSE_COUNT,
   PULSE_PROFILE,
   TOOL_BRIGHT_FRAMES,
@@ -57,19 +58,27 @@ export function markDone(m: MotionState, id: string): void {
 
 const glyph = (cp: number, fg: number): Cell[] => [{ cp, fg, bg: DEFAULT }]
 
-/** The state dot of a row: one cell. */
+/**
+ * The state dot of a row: one cell. Running: the lavender spinner `◐ ◓ ◑ ◒`, a step every 0.2 s in Lively and every
+ * second in Subtle. Waiting: a steady `●` dimmed half-way to gray (claudepeeker's dim dot). Pending `◌`, done a gray
+ * `●`. While the bar's level-up pulse crosses 80% (Lively) the dot keeps its glyph and pulses toward red.
+ */
 export function composeDot(m: MotionState, id: string, state: DotState, level: 'lively' | 'subtle'): Cell[] {
   const t = m.tick
+  const cp =
+    state === 'pending'
+      ? DOT_PENDING
+      : state === 'running'
+        ? (DOT_SPIN[Math.floor(t / (level === 'lively' ? DOT_SPIN_FRAMES : DOT_SPIN_SUBTLE_FRAMES)) % DOT_SPIN.length] ?? DOT_RUNNING)
+        : DOT_FULL
   const pulse = m.bars.get(id)?.pulse
   if (level === 'lively' && pulse != null && pulse.isHot && t < pulse.start + PULSE_PROFILE.length * PULSE_COUNT) {
-    return glyph(DOT_FULL, mixColor(LIVE, HOT, PULSE_PROFILE[(t - pulse.start) % PULSE_PROFILE.length] ?? 0))
+    return glyph(cp, mixColor(LIVE, HOT, PULSE_PROFILE[(t - pulse.start) % PULSE_PROFILE.length] ?? 0))
   }
-  if (state === 'pending') return glyph(DOT_PENDING, LIVE)
-  if (state === 'waiting') return glyph(DOT_WAITING, LIVE)
-  if (state === 'done') return glyph(DOT_FULL, TRACK)
-  if (level === 'lively') return glyph(DOT_FULL, Math.floor(t / DOT_BLINK_FRAMES) % 2 === 0 ? LIVE : mixColor(LIVE, TRACK, 0.5))
+  if (state === 'done') return glyph(cp, TRACK)
+  if (state === 'waiting') return glyph(cp, mixColor(LIVE, TRACK, 0.5))
 
-  return glyph(DOT_FULL, Math.floor(t / DOT_BREATHE_FRAMES) % 2 === 0 ? LIVE : mixColor(LIVE, TRACK, 0.5))
+  return glyph(cp, LIVE)
 }
 
 export type TailState =

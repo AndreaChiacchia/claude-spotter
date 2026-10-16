@@ -188,9 +188,9 @@ test('the hint line gains a titled row per live subagent, filled in as it runs',
   world(on, 'claude-sonnet-5-5', 76_000)
   await spawn($)
   const ui = await $.ui.mount(HINT)
-  expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 · Plan · 0s`)
+  expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ◐ Sonnet 5.5 · Plan · 0s`)
   await step($, 'claude-sonnet-5-5', 'low')
-  expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 0s`)
+  expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ◐ Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 0s`)
   // The agent's name is plain dim text, as claudepeeker draws the branch.
   const name = await ui.find({ type: 'Text', text: /^Plan$/ })
   expect(JSON.stringify(name)).toContain('dimColor')
@@ -201,7 +201,7 @@ test('the hint line gains a titled row per live subagent, filled in as it runs',
   expect(model).not.toContain('bold')
   expect(JSON.stringify(await ui.find({ type: 'Text', text: ' ·low' }))).toContain('#5fafaf')
   // The dot is the lavender of claudeticker's live bar.
-  expect(JSON.stringify(await ui.find({ type: 'Text', text: '●' }))).toContain('#afafd7')
+  expect(JSON.stringify(await ui.find({ type: 'Text', text: '◐' }))).toContain('#afafd7')
 })
 
 test('a toast a moment after the spawn names the agent, its model and effort', async ($, on) => {
@@ -235,7 +235,7 @@ test(
     await spawn($)
     await step($, 'claude-opus-5-5', 'high')
     const ui = await $.ui.mount(HINT)
-    expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ● Opus 5.5 ·high · Plan · ctx (1M) ●●○○○○○○ 30% · 300K · 0s`)
+    expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ◐ Opus 5.5 ·high · Plan · ctx (1M) ●●○○○○○○ 30% · 300K · 0s`)
   },
 )
 
@@ -260,12 +260,13 @@ test('Lively draws the dot, the bar and the tail as Rasters that read as the pla
   const drawn = await draw(w, ui)
   expect(rasters(drawn).map(rasterKey)).toEqual(['spotter-dot-a1', 'spotter-bar-a1', 'spotter-tail-a1'])
   await w.clock.advance(3000)
-  expect(current(w, drawn)).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 3s`)
+  // The live dot is a spinner frame; the plain row draws its first frame, ◐.
+  expect(current(w, drawn).replace(/[◓◑◒]/u, '◐')).toBe(`${ENGINE}subagents └ ◐ Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 3s`)
   expect(w.blits.every(b => b.requestId === 'hint' && b.key.startsWith('spotter-'))).toBe(true)
-  // The dot stays full and dims.
+  // The dot spins ◐ ◓ ◑ ◒ in lavender.
   const dotCells = w.blits.filter(b => b.key === 'spotter-dot-a1').flatMap(b => decodeCells(b.cells))
-  expect(dotCells.every(c => c.cp === 0x25cf)).toBe(true)
-  expect(dotCells.map(c => c.fg)).toContain(mixColor(LIVE, TRACK, 0.5))
+  expect(new Set(dotCells.map(c => c.cp))).toEqual(new Set([0x25d0, 0x25d3, 0x25d1, 0x25d2]))
+  expect(dotCells.every(c => c.fg === LIVE)).toBe(true)
 })
 
 test('a bar there at the first draw is taken silently', async ($, on) => {
@@ -281,7 +282,7 @@ test('a bar whose first response comes after the first draw fills in from empty 
   await spawn($)
   const ui = await $.ui.mount(HINT)
   // The first draw: the row has no response yet.
-  expect(text(await ui.drawn()).trimEnd()).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 · Plan · 0s`)
+  expect(text(await ui.drawn()).trimEnd()).toBe(`${ENGINE}subagents └ ◐ Sonnet 5.5 · Plan · 0s`)
   await step($, 'claude-sonnet-5-5', 'low')
   const drawn = await draw(w, ui)
   const bar = text(rasters(drawn)[1])
@@ -369,7 +370,7 @@ test('the desktop draws the plain row and no Raster', async ($, on) => {
   const ui = await $.ui.mount({ ...HINT, surface: 'desktop' } as never)
   const drawn = await ui.drawn()
   expect(rasters(drawn).length).toBe(0)
-  expect(text(drawn)).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 0s`)
+  expect(text(drawn)).toBe(`${ENGINE}subagents └ ◐ Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 0s`)
   await w.clock.advance(1000)
   expect(w.blits.length).toBe(0)
 })
@@ -380,9 +381,10 @@ test('a slot that refuses its first blits three times is drawn still', async ($,
   await spawn($)
   await step($, 'claude-sonnet-5-5', 'low')
   const ui = await $.ui.mount(HINT)
+  // One spinner step (0.2 s) per round: each one is the first blit of a fresh draw, refused.
   for (let i = 0; i < 3; i++) {
     expect(rasters(await ui.drawn()).length).toBeGreaterThan(0)
-    await w.clock.advance(600)
+    await w.clock.advance(200)
   }
   const drawn = await ui.drawn()
   expect(rasters(drawn).length).toBe(0)

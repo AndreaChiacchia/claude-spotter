@@ -22,7 +22,7 @@
     "motion": {
       "type": "string",
       "title": "Motion",
-      "description": "How the rows move. lively: the bars glint when they change, the fill grows and blends its color, the percent and the tokens roll, crossing 50% or 80% pulses the bar and past 80% the dot pulses red, a compaction drains the bar with sparkles, each tool call flashes its name at the end of the row, and the running dot dims and brightens every half second. subtle: softer glints, no sparkles, the dot every second. off: still rows; the elapsed time still updates every second.",
+      "description": "How the rows move. lively: the bars glint when they change, the fill grows and blends its color, the percent and the tokens roll, crossing 50% or 80% pulses the bar and past 80% the dot pulses red, a compaction drains the bar with sparkles, each tool call flashes its name at the end of the row, and the running dot spins ◐ ◓ ◑ ◒ every 0.2 s. subtle: softer glints, no sparkles, the spinner a step every second. off: still rows; the elapsed time still updates every second.",
       "default": "lively",
       "options": ["lively", "subtle", "off"]
     }

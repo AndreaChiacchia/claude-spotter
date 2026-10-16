@@ -20,19 +20,21 @@ function at(t: number): MotionState {
 
 const live = (slot: number, elapsedMs = 12_000): TailState => ({ kind: 'live', elapsedMs, slot })
 
-test('the running dot stays full and dims every half second in Lively', () => {
+test('the running dot spins ◐ ◓ ◑ ◒ every 0.2 s in Lively, in lavender', () => {
+  const seen: string[] = []
   for (let t = 0; t < 20; t++) {
     const [cell] = composeDot(at(t), 'a1', 'running', 'lively')
-    expect(String.fromCodePoint(cell!.cp)).toBe('●')
-    expect(cell!.fg).toBe(t < 10 ? LIVE : mixColor(LIVE, TRACK, 0.5))
+    expect(cell!.fg).toBe(LIVE)
+    if (t % 4 === 0) seen.push(String.fromCodePoint(cell!.cp))
   }
+  expect(seen).toEqual(['◐', '◓', '◑', '◒', '◐'])
 })
 
-test('in Subtle the running dot stays lit and changes color every second', () => {
+test('in Subtle the running dot spins one step a second', () => {
   for (let t = 0; t < 40; t++) {
     const [cell] = composeDot(at(t), 'a1', 'running', 'subtle')
-    expect(String.fromCodePoint(cell!.cp)).toBe('●')
-    expect(cell!.fg).toBe(t < 20 ? LIVE : mixColor(LIVE, TRACK, 0.5))
+    expect(String.fromCodePoint(cell!.cp)).toBe(t < 20 ? '◐' : '◓')
+    expect(cell!.fg).toBe(LIVE)
   }
 })
 
@@ -40,7 +42,7 @@ test('pending, waiting and done dots', () => {
   const [pending] = composeDot(at(3), 'a1', 'pending', 'lively')
   expect([String.fromCodePoint(pending!.cp), pending!.fg]).toEqual(['◌', LIVE])
   const [waiting] = composeDot(at(3), 'a1', 'waiting', 'subtle')
-  expect([String.fromCodePoint(waiting!.cp), waiting!.fg]).toEqual(['◐', LIVE])
+  expect([String.fromCodePoint(waiting!.cp), waiting!.fg]).toEqual(['●', mixColor(LIVE, TRACK, 0.5)])
   const [done] = composeDot(at(3), 'a1', 'done', 'lively')
   expect([String.fromCodePoint(done!.cp), done!.fg]).toEqual(['●', TRACK])
 })
@@ -52,7 +54,7 @@ test('crossing 80% pulses the dot toward red in Lively only', () => {
   observe(m, 'a1', { percent: 85, tokens: 850_000 }, pref, 'lively', false)
   const [lively] = composeDot(m, 'a1', 'running', 'lively')
   expect(lively!.fg).toBe(mixColor(LIVE, HOT, PULSE_PROFILE[0]!))
-  expect(String.fromCodePoint(lively!.cp)).toBe('●')
+  expect(['◐', '◓', '◑', '◒']).toContain(String.fromCodePoint(lively!.cp))
   const [subtle] = composeDot(m, 'a1', 'running', 'subtle')
   expect(subtle!.fg).toBe(LIVE)
 

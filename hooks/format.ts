@@ -3,7 +3,7 @@
 import type { AgentStatus } from 'claude-code'
 
 import type { AgentStat, BarPref } from '../types'
-import { hex } from './cells'
+import { LIVE, TRACK, hex, mixColor } from './cells'
 import { drawBar, styleOf, trackColorOf } from './styles'
 
 // claudepeeker's amber and cyan, muted (xterm 179 and 73): the same hues, a step below its line.
@@ -190,11 +190,12 @@ export function finishToast(type: string, word: FinishWord, durationMs: number, 
 
 export type DotState = 'pending' | 'running' | 'waiting' | 'done'
 
-/** The state dot of a row as plain text: lavender while the subagent lives, gray once it is done. */
+/** The state dot of a row as plain text: `◌` pending, `◐` running, a dimmed `●` waiting, a gray `●` done. */
 export function dotSegment(state: DotState): Segment {
   if (state === 'done') return { text: '●', color: GRAY }
+  if (state === 'waiting') return { text: '●', color: hex(mixColor(LIVE, TRACK, 0.5)) }
 
-  return { text: state === 'pending' ? '◌' : state === 'waiting' ? '◐' : '●', color: LAVENDER }
+  return { text: state === 'pending' ? '◌' : '◐', color: LAVENDER }
 }
 
 /** What the plain row (no Raster) shows for one subagent. */

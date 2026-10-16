@@ -95,7 +95,7 @@ test('the finish toast names the agent, how it ended, how long and its last cont
 test('the plain row: the dot, the line, the context tokens, then the elapsed time or the finish', () => {
   const stat = { model: 'claude-sonnet-5-5', effort: 'low', tokens: 76_000 }
   const row = { dot: 'running', stat, type: 'Plan', window: 200_000, bar: DEFAULT_BAR, elapsedMs: 12_000, finish: null } as const
-  expect(text(plainRowSegments(row))).toBe('● Sonnet 5.5 ·low · Plan · ctx (200K) ▰▰▱▱▱ 38% · 76K · 12s')
+  expect(text(plainRowSegments(row))).toBe('◐ Sonnet 5.5 ·low · Plan · ctx (200K) ▰▰▱▱▱ 38% · 76K · 12s')
   expect(
     text(plainRowSegments({ ...row, dot: 'done', finish: { word: 'done', durationMs: 42_000 } })),
   ).toBe('● Sonnet 5.5 ·low · Plan · ctx (200K) ▰▰▱▱▱ 38% · 76K ✦ done · 42s')

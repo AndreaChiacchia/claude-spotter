@@ -26,7 +26,9 @@ export const MINUS = 0x2212 // −
 export const FAIL_MARK = 0x2717 // ✗
 export const DOT_FULL = 0x25cf // ●
 export const DOT_PENDING = 0x25cc // ◌
-export const DOT_WAITING = 0x25d0 // ◐
+/** The running dot: claudecharter's and claudeticker's agent spinner; its first frame is the still dot. */
+export const DOT_SPIN: readonly number[] = [0x25d0, 0x25d3, 0x25d1, 0x25d2] // ◐ ◓ ◑ ◒
+export const DOT_RUNNING = 0x25d0 // ◐
 export const TOOL_L = 0x2039 // ‹
 export const TOOL_R = 0x203a // ›
 
