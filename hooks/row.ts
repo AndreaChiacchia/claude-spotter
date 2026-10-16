@@ -2,7 +2,6 @@
 
 import {
   DEFAULT,
-  DOT_EMPTY,
   DOT_FULL,
   DOT_PENDING,
   DOT_WAITING,
@@ -68,7 +67,7 @@ export function composeDot(m: MotionState, id: string, state: DotState, level: '
   if (state === 'pending') return glyph(DOT_PENDING, LIVE)
   if (state === 'waiting') return glyph(DOT_WAITING, LIVE)
   if (state === 'done') return glyph(DOT_FULL, TRACK)
-  if (level === 'lively') return glyph(Math.floor(t / DOT_BLINK_FRAMES) % 2 === 0 ? DOT_FULL : DOT_EMPTY, LIVE)
+  if (level === 'lively') return glyph(DOT_FULL, Math.floor(t / DOT_BLINK_FRAMES) % 2 === 0 ? LIVE : mixColor(LIVE, TRACK, 0.5))
 
   return glyph(DOT_FULL, Math.floor(t / DOT_BREATHE_FRAMES) % 2 === 0 ? LIVE : mixColor(LIVE, TRACK, 0.5))
 }

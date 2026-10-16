@@ -56,7 +56,7 @@ export const FADE_FRAMES = FINISH_MS / FRAME_MS
 export const TOOL_FRAMES = 24
 /** The first frames of a tool flash in the bright color (Lively). */
 export const TOOL_BRIGHT_FRAMES = 4
-/** The Lively running dot blinks every this many frames (0.5 s). */
+/** The Lively running dot dims and brightens every this many frames (0.5 s). */
 export const DOT_BLINK_FRAMES = 10
 /** The Subtle running dot changes color every this many frames (1 s). */
 export const DOT_BREATHE_FRAMES = 20

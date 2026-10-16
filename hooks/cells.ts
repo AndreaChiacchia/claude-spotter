@@ -23,7 +23,6 @@ export const COMPACT_MARK = 0x21bb // ↻
 export const MINUS = 0x2212 // −
 export const FAIL_MARK = 0x2717 // ✗
 export const DOT_FULL = 0x25cf // ●
-export const DOT_EMPTY = 0x25cb // ○
 export const DOT_PENDING = 0x25cc // ◌
 export const DOT_WAITING = 0x25d0 // ◐
 export const TOOL_L = 0x2039 // ‹

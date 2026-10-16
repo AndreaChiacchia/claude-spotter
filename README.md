@@ -19,11 +19,11 @@ A mod for the Claude Code CLI that shows what each running subagent runs on. Cla
 ## Features
 
 - **A row per live subagent** under a small `subagents` title, in a tree: a state dot, the model, the effort, the agent's type, its context window with a bar and percent, its context tokens and the time since it spawned.
-- **A dot for each state:** `◌` pending, `●` running, `◐` waiting, in lavender. The running dot blinks in Lively. A finished row's dot is gray.
+- **A dot for each state:** `◌` pending, `●` running, `◐` waiting, in lavender. The running dot dims and brightens, every half second in Lively. A finished row's dot is gray.
 - **A finish:** a subagent that ends shows ` ✦ done · 42s` in place of its time for 2 seconds, then leaves. A stopped one reads `✗ stopped`, a failed one `✗ failed`.
 - **A finish toast:** `Claude-Spotter: Explore done · 42s · 63K`, once the subagent ends.
 - **A toast on spawn:** `Claude-Spotter: Explore → Sonnet 5.5 ·medium`, a moment after the subagent starts, once its first request has told its effort.
-- **Motion** (`/spotter`): Lively (default), Subtle or Off. The bars glint when they change: a warm sweep runs left to right when context rises, an icy one right to left when it falls, and the emptied cells fade. The fill grows smoothly and blends its color, and the percent rolls to its new value with the changed digits flashing. Rising past 50% or 80% pulses the bar, and in Lively the dot pulses red past 80%. A compaction drains the bar and shows `↻ −40%` for a moment. A bar that appears after the first draw fills in from empty. Subtle has softer glints, no sparkles, and a dot that alternates its color instead of blinking.
+- **Motion** (`/spotter`): Lively (default), Subtle or Off. The bars glint when they change: a warm sweep runs left to right when context rises, an icy one right to left when it falls, and the emptied cells fade. The fill grows smoothly and blends its color, and the percent rolls to its new value with the changed digits flashing. Rising past 50% or 80% pulses the bar, and in Lively the dot pulses red past 80%. A compaction drains the bar and shows `↻ −40%` for a moment. A bar that appears after the first draw fills in from empty. Subtle has softer glints, no sparkles, and a dot that dims more slowly (every second).
 - **Tool calls:** each tool a subagent calls flashes its name at the end of its row, `‹Grep›`, for a moment, when the row has room.
 - **Bar styles** (`/spotter`): the same 16 styles and widths as [claudepeeker](https://github.com/AndreaChiacchia/claude-peeker).
 - **Colors follow the fill:** green below 50%, yellow from 50%, red from 80%.

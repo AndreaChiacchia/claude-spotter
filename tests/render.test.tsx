@@ -2,7 +2,7 @@ import type { AgentStatus, On, TurnStepResult } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { decodeCells, mixColor } from '../hooks/cells'
+import { LIVE, TRACK, decodeCells, mixColor } from '../hooks/cells'
 import type { Cell } from '../hooks/cells'
 
 const HINT = {
@@ -153,7 +153,7 @@ async function draw(w: World, ui: Drawable): Promise<unknown> {
 
 /**
  * The drawing as the screen shows it by now: each Raster as its last blit since that render painted it, else as
- * mounted; `○` read as `●` (the blinking dot) and the trailing blanks trimmed.
+ * mounted, and the trailing blanks trimmed.
  */
 function current(w: World, drawn: unknown): string {
   const at = stamps.get(drawn as object)
@@ -161,9 +161,7 @@ function current(w: World, drawn: unknown): string {
     const key = rasterKey(n)
     const last = w.blits.filter(b => b.key === key && b.render === at).at(-1)
     return last === undefined ? mountedText(n) : cellText(decodeCells(last.cells))
-  })
-    .replace(/○/g, '●')
-    .trimEnd()
+  }).trimEnd()
 }
 
 /** What each blit of `key` painted, as text. */
@@ -270,8 +268,10 @@ test('Lively draws the dot, the bar and the tail as Rasters that read as the pla
   await w.clock.advance(3000)
   expect(current(w, drawn)).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 ·low · Plan · ctx (1M) ▰▱▱▱▱ 8% · 76K · 3s`)
   expect(w.blits.every(b => b.requestId === 'hint' && b.key.startsWith('spotter-'))).toBe(true)
-  // The dot blinks.
-  expect(blitTexts(w, 'spotter-dot-a1').includes('○')).toBe(true)
+  // The dot stays full and dims.
+  const dotCells = w.blits.filter(b => b.key === 'spotter-dot-a1').flatMap(b => decodeCells(b.cells))
+  expect(dotCells.every(c => c.cp === 0x25cf)).toBe(true)
+  expect(dotCells.map(c => c.fg)).toContain(mixColor(LIVE, TRACK, 0.5))
 })
 
 test('a bar there at the first draw is taken silently', async ($, on) => {

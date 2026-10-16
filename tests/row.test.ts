@@ -20,11 +20,11 @@ function at(t: number): MotionState {
 
 const live = (slot: number, elapsedMs = 12_000): TailState => ({ kind: 'live', elapsedMs, slot })
 
-test('the running dot blinks every half second in Lively', () => {
+test('the running dot stays full and dims every half second in Lively', () => {
   for (let t = 0; t < 20; t++) {
     const [cell] = composeDot(at(t), 'a1', 'running', 'lively')
-    expect(String.fromCodePoint(cell!.cp)).toBe(t < 10 ? '●' : '○')
-    expect(cell!.fg).toBe(LIVE)
+    expect(String.fromCodePoint(cell!.cp)).toBe('●')
+    expect(cell!.fg).toBe(t < 10 ? LIVE : mixColor(LIVE, TRACK, 0.5))
   }
 })
 
