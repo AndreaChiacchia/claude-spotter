@@ -1,6 +1,6 @@
 {
   "name": "claudespotter",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Shows each running subagent's model, effort and context bar above the agent list, with a toast on spawn and bar styles in /config",
   "author": { "name": "AndreaChiacchia", "url": "https://github.com/AndreaChiacchia" },
   "types": "./types/index.d.ts",
