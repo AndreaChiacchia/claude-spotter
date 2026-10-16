@@ -1,7 +1,30 @@
 {
   "name": "claudespotter",
   "version": "0.2.1",
-  "description": "Shows each running subagent's model, effort and context bar above the agent list, with a toast on spawn and restylable bars",
+  "description": "Shows each running subagent's model, effort and context bar above the agent list, with a toast on spawn and bar styles in /config",
   "author": { "name": "AndreaChiacchia", "url": "https://github.com/AndreaChiacchia" },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "barStyle": {
+      "type": "string",
+      "title": "Bar style",
+      "description": "The look of each subagent's context bar. blocks: █ on ░, the tip easing by eighths of a cell while the bar grows. parallelogram: ▰ on ▱. shade: ▓ on ░. solid: █ on a gray █. smooth: █ on ░, the edge always by eighths of a cell. smooth-bare: the same on blank. line: ━ on ─. heavy: a bold ━ on a dim ━. dots: ● on ○. squares: ■ on □. diamonds: ◆ on ◇. braille: ⣿ on ⣀. ascii: # on - between [ and ], for fonts without these glyphs. arrow: ===> between [ and ]. pie: one glyph, ○ ◔ ◑ ◕ ●. spark: one glyph, ▁ to █. none: no bar, the percent alone.",
+      "default": "parallelogram",
+      "options": ["blocks", "parallelogram", "shade", "solid", "smooth", "smooth-bare", "line", "heavy", "dots", "squares", "diamonds", "braille", "ascii", "arrow", "pie", "spark", "none"]
+    },
+    "barWidth": {
+      "type": "string",
+      "title": "Bar width",
+      "description": "How many cells each subagent's context bar takes: 3 to 20. pie, spark and none ignore it.",
+      "default": "5",
+      "options": ["3", "4", "5", "6", "8", "10", "12", "15", "20"]
+    },
+    "motion": {
+      "type": "string",
+      "title": "Motion",
+      "description": "How the rows move. lively: the bars glint when they change, the fill grows and blends its color, the percent and the tokens roll, crossing 50% or 80% pulses the bar and past 80% the dot pulses red, a compaction drains the bar with sparkles, each tool call flashes its name at the end of the row, and the running dot dims and brightens every half second. subtle: softer glints, no sparkles, the dot every second. off: still rows; the elapsed time still updates every second.",
+      "default": "lively",
+      "options": ["lively", "subtle", "off"]
+    }
+  }
 }

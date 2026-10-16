@@ -11,7 +11,7 @@ import {
   wordForReason,
   wordForStatus,
 } from '../hooks/format'
-import { DEFAULT_BAR } from '../hooks/styles'
+import { DEFAULT_BAR, DEFAULT_SETTINGS, normalizeSettings } from '../hooks/styles'
 
 const text = (segments: { text: string }[]) => segments.map(s => s.text).join('')
 
@@ -53,6 +53,11 @@ test('the line: model and effort, the agent, then the context once a response ca
   expect(text(lineSegments({ ...stat, effort: null, tokens: 0 }, 'Plan', 200_000, DEFAULT_BAR))).toBe(
     'Sonnet 5.5 · Plan · ctx (200K) ▱▱▱▱▱ 0%',
   )
+})
+
+test('settings fall back to their defaults', () => {
+  expect(normalizeSettings({ barStyle: 'gone', barWidth: '7', motion: 'wild' })).toEqual(DEFAULT_SETTINGS)
+  expect(normalizeSettings({ barStyle: 'heavy', barWidth: '8' }).bar).toEqual({ style: 'heavy', width: 8 })
 })
 
 test('the elapsed time: seconds, minutes and seconds, hours and minutes', () => {

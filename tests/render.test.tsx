@@ -28,14 +28,6 @@ const ROW = {
   } as never,
 } as const
 
-const PANE = {
-  plugin: 'claudespotter',
-  surface: 'terminal',
-  component: 'Pane',
-  requestId: 'spotter-bar',
-  props: { title: 'Subagent ctx bar', isFocused: false } as never,
-} as const
-
 /** What the engine draws beneath the mod, for every component. */
 const ENGINE = 'esc to interrupt'
 
@@ -79,7 +71,6 @@ function world(on: On, model: string, tokens: number, status: AgentStatus = 'run
     })
     return { value: state.blitAnswer }
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, percent: 0 }, rateLimits: [] } }))
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
   on('agent.list', () => ({ value: [{ id: 'a1', type: 'Plan', description: 'Searching', status: state.status }] }))
@@ -193,18 +184,9 @@ const complete = ($: Engine, durationMs: number, reason: 'answer' | 'aborted') =
 const command = ($: Engine, args: string) =>
   $.command.run({ command: 'spotter', args, origin: { kind: 'composer' } } as never) as Promise<{ text: string }>
 
-/** The panel set to Off: two steps on from Lively. */
-async function motionOff($: Engine) {
-  const pane = await $.ui.mount(PANE)
-  await pane.press({ key: 'motion-next' })
-  await pane.press({ key: 'motion-next' })
-  return pane
-}
-
-test('the hint line gains a titled row per live subagent, filled in as it runs', async ($, on) => {
+test('the hint line gains a titled row per live subagent, filled in as it runs', { options: { motion: 'off' } }, async ($, on) => {
   world(on, 'claude-sonnet-5-5', 76_000)
   await spawn($)
-  await motionOff($)
   const ui = await $.ui.mount(HINT)
   expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ● Sonnet 5.5 · Plan · 0s`)
   await step($, 'claude-sonnet-5-5', 'low')
@@ -245,17 +227,29 @@ test('the Agent call in the chat is left as drawn', async ($, on) => {
   expect(text(await (await $.ui.mount(ROW)).drawn())).toBe(ENGINE)
 })
 
-test('the panel restyles the bar the rows draw', async ($, on) => {
-  world(on, 'claude-opus-5-5', 300_000)
+test(
+  'the bar settings reach the rows',
+  { options: { motion: 'off', barStyle: 'dots', barWidth: '8' } },
+  async ($, on) => {
+    world(on, 'claude-opus-5-5', 300_000)
+    await spawn($)
+    await step($, 'claude-opus-5-5', 'high')
+    const ui = await $.ui.mount(HINT)
+    expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ● Opus 5.5 ·high · Plan · ctx (1M) ●●○○○○○○ 30% · 300K · 0s`)
+  },
+)
+
+test('a heavy bar draws ━ on a dim ━', { options: { barStyle: 'heavy' } }, async ($, on) => {
+  world(on, 'claude-sonnet-5-5', 76_000)
   await spawn($)
-  await step($, 'claude-opus-5-5', 'high')
-  const pane = await motionOff($)
-  // Parallelogram steps on to Dots, six along; two widths on is 8 cells.
-  for (let i = 0; i < 6; i++) await pane.press({ key: 'style-next' })
-  await pane.press({ key: 'width-next' })
-  await pane.press({ key: 'width-next' })
-  const ui = await $.ui.mount(HINT)
-  expect(text(await ui.drawn())).toBe(`${ENGINE}subagents └ ● Opus 5.5 ·high · Plan · ctx (1M) ●●○○○○○○ 30% · 300K · 0s`)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const drawn = await (await $.ui.mount(HINT)).drawn()
+  const bar = rasters(drawn).find(n => rasterKey(n) === 'spotter-bar-a1')
+  expect(bar).toBeDefined()
+  expect(mountedText(bar!).startsWith('━━━━━ 8%')).toBe(true)
+  const cells = decodeCells(String(bar!.props?.cells ?? ''))
+  expect(cells[0]?.fg).toBe(0x5fff00)
+  expect(cells.slice(1, 5).map(c => c.fg)).toEqual([0x444444, 0x444444, 0x444444, 0x444444])
 })
 
 test('Lively draws the dot, the bar and the tail as Rasters that read as the plain row', async ($, on) => {
@@ -355,11 +349,10 @@ test('an interrupted subagent reads stopped', async ($, on) => {
   expect(w.toasts.at(-1)).toBe('Claude-Spotter: Plan stopped · 42s · 76K')
 })
 
-test('Off draws no Raster and no blit, and the elapsed time still ticks', async ($, on) => {
+test('Off draws no Raster and no blit, and the elapsed time still ticks', { options: { motion: 'off' } }, async ($, on) => {
   const w = world(on, 'claude-sonnet-5-5', 76_000)
   await spawn($)
   await step($, 'claude-sonnet-5-5', 'low')
-  await motionOff($)
   const ui = await $.ui.mount(HINT)
   expect(rasters(await ui.drawn()).length).toBe(0)
   await w.clock.advance(2000)
@@ -447,11 +440,10 @@ test('demo stop brings the real rows back; a second one says no demo runs', asyn
   expect((await command($, 'demo stop')).text).toBe('No demo is running.')
 })
 
-test('under Off the demo still steps the rows, without effects', async ($, on) => {
+test('under Off the demo still steps the rows, without effects', { options: { motion: 'off' } }, async ($, on) => {
   const w = world(on, 'claude-sonnet-5-5', 76_000)
   await spawn($)
   await step($, 'claude-sonnet-5-5', 'low')
-  await motionOff($)
   const ui = await $.ui.mount(HINT)
   await ui.drawn()
   const started = await command($, 'demo')
@@ -463,19 +455,20 @@ test('under Off the demo still steps the rows, without effects', async ($, on) =
   expect(w.blits.length).toBe(0)
 })
 
-test('the panel steps the motion: Lively, Subtle, Off; the bar keeps its own value', async ($, on) => {
-  const w = world(on, 'claude-sonnet-5-5', 76_000)
-  const pane = await $.ui.mount(PANE)
-  expect(text(await pane.drawn())).toContain('Motion Lively ')
-  expect((await pane.find({ key: 'motion-prev' }))?.text).toBe('‹')
-  expect((await pane.find({ key: 'motion-next' }))?.text).toBe('›')
-  await pane.press({ key: 'motion-next' })
-  expect(text(await pane.drawn())).toContain('Motion Subtle ')
-  expect(w.store.get('motion')).toBe('subtle')
-  expect(w.store.get('bar')).toBe(undefined)
+test('a bare /spotter points to /config', async ($, on) => {
+  world(on, 'claude-sonnet-5-5', 76_000)
+  expect((await command($, '')).text).toBe(
+    "Claude-Spotter's settings are in /config: the bar style and width, and Motion. /spotter demo plays the motion tour.",
+  )
 })
 
-test('a bare /spotter still opens the panel', async ($, on) => {
-  world(on, 'claude-sonnet-5-5', 76_000)
-  expect((await command($, '')).text).toBe('Opened the subagent bar panel.')
+test('no setting is written to the store', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const ui = await $.ui.mount(HINT)
+  await ui.drawn()
+  await command($, 'demo')
+  await w.clock.advance(1000)
+  expect(w.store.size).toBe(0)
 })

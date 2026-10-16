@@ -28,8 +28,6 @@ declare module 'claude-code' {
       spawns: Record<string, Spawn>
       /** By the subagent's id. */
       stats: Record<string, AgentStat>
-      bar: BarPref
-      motion: Motion
     }
   }
 }

@@ -4,7 +4,7 @@ import { GLINT_UP, TRACK, DEFAULT, mixColor } from '../hooks/cells'
 import type { Cell } from '../hooks/cells'
 import { FADE_FRAMES, advance, composeBar, createMotion, isActive, observe, startFade } from '../hooks/motion'
 import type { MotionState } from '../hooks/motion'
-import { STYLES, drawBar, normalizeMotion } from '../hooks/styles'
+import { STYLES, drawBar, normalizeSettings } from '../hooks/styles'
 import type { BarPref, Motion } from '../types'
 
 const GREEN = 0x5fff00
@@ -33,11 +33,29 @@ function frames(m: MotionState, pref: BarPref, level: 'lively' | 'subtle', last:
   return out
 }
 
-test('motion is read back from the store, and defaults to lively', () => {
-  expect(normalizeMotion({})).toBe('lively')
-  expect(normalizeMotion('subtle')).toBe('subtle')
-  expect(normalizeMotion('off')).toBe('off')
-  expect(normalizeMotion('wild')).toBe('lively')
+test('motion comes from the setting, and defaults to lively', () => {
+  expect(normalizeSettings({}).motion).toBe('lively')
+  expect(normalizeSettings({ motion: 'subtle' }).motion).toBe('subtle')
+  expect(normalizeSettings({ motion: 'off' }).motion).toBe('off')
+  expect(normalizeSettings({ motion: 'wild' }).motion).toBe('lively')
+})
+
+test('a growing blocks bar eases its tip by eighths; at rest it is whole cells', () => {
+  const pref = { style: 'blocks', width: 10 }
+  const m = moved(pref, 12, 20)
+  const cells = composeBar(m, 'a1', pref, 'lively').slice(0, 10)
+  expect(cells.some(c => c.cp >= 0x2589 && c.cp <= 0x258f)).toBe(true)
+  const last = frames(m, pref, 'lively', 80).at(-1) ?? []
+  expect(cellText(last).startsWith('██░░░░░░░░ 20%')).toBe(true)
+})
+
+test('a heavy bar draws its track in the dim heavy gray', () => {
+  const pref = { style: 'heavy', width: 5 }
+  const m = createMotion()
+  observe(m, 'a1', { percent: 40, tokens: 400_000 }, pref, 'lively', false)
+  const cells = composeBar(m, 'a1', pref, 'lively').slice(0, 5)
+  expect(cells.map(c => c.cp)).toEqual([0x2501, 0x2501, 0x2501, 0x2501, 0x2501])
+  expect(cells.map(c => c.fg)).toEqual([GREEN, GREEN, 0x444444, 0x444444, 0x444444])
 })
 
 test('with nothing moving a bar is exactly the plain bar, a space, the figure, then the tokens, in every style and width', () => {

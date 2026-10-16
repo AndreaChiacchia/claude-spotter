@@ -3,7 +3,8 @@
 import type { AgentStatus } from 'claude-code'
 
 import type { AgentStat, BarPref } from '../types'
-import { drawBar, styleOf } from './styles'
+import { hex } from './cells'
+import { drawBar, styleOf, trackColorOf } from './styles'
 
 // claudepeeker's amber and cyan, muted (xterm 179 and 73): the same hues, a step below its line.
 export const GOLD = '#d7af5f'
@@ -103,7 +104,11 @@ export function barSegments(bar: BarPref, percent: number): Segment[] {
   const col = TONES[tone(percent)]
   const figure = { text: `${percent}%`, color: col }
   if (styleOf(bar.style).id === 'none') return [figure]
-  const cells = drawBar(bar, percent).map(part => ({ text: part.text, color: part.kind === 'fill' ? col : GRAY }))
+  const track = hex(trackColorOf(bar))
+  const cells = drawBar(bar, percent).map(part => ({
+    text: part.text,
+    color: part.kind === 'fill' ? col : part.kind === 'track' ? track : GRAY,
+  }))
 
   return [...cells, { text: ' ' }, figure]
 }

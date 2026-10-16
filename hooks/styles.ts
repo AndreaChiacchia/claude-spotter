@@ -1,6 +1,7 @@
-// The progress bar styles, each drawn as runs of fill, track and frame text (claudepeeker's set).
+// The progress bar styles (claudeticker's meter styles plus pie, spark and none), each drawn as runs of fill, track and frame text, and the /config settings.
 
 import type { BarPref, Motion } from '../types'
+import { TRACK, TRACK_HEAVY } from './cells'
 
 export type BarPart = { kind: 'fill' | 'track' | 'frame'; text: string }
 
@@ -8,9 +9,10 @@ type Cells = { fill: string; track: string; open?: string; close?: string; head?
 
 export type BarStyle = {
   id: string
-  name: string
-  /** One glyph whatever the width: the width picker does not apply. */
+  /** One glyph whatever the width: the width setting does not apply. */
   isGlyph?: boolean
+  /** The track cells' color; TRACK when absent. */
+  trackColor?: number
   draw: (percent: number, width: number) => BarPart[]
 }
 
@@ -68,22 +70,23 @@ function glyph(steps: string): BarStyle['draw'] {
 }
 
 export const STYLES: readonly BarStyle[] = [
-  { id: 'blocks', name: 'Blocks', draw: cells({ fill: '█', track: '░' }) },
-  { id: 'parallelogram', name: 'Parallelogram', draw: cells({ fill: '▰', track: '▱' }) },
-  { id: 'shade', name: 'Shade', draw: cells({ fill: '▓', track: '░' }) },
-  { id: 'solid', name: 'Solid track', draw: cells({ fill: '█', track: '█' }) },
-  { id: 'smooth', name: 'Smooth', draw: smooth('░') },
-  { id: 'smooth-bare', name: 'Smooth, bare', draw: smooth(' ') },
-  { id: 'line', name: 'Line', draw: cells({ fill: '━', track: '─' }) },
-  { id: 'dots', name: 'Dots', draw: cells({ fill: '●', track: '○' }) },
-  { id: 'squares', name: 'Squares', draw: cells({ fill: '■', track: '□' }) },
-  { id: 'diamonds', name: 'Diamonds', draw: cells({ fill: '◆', track: '◇' }) },
-  { id: 'braille', name: 'Braille', draw: cells({ fill: '⣿', track: '⣀' }) },
-  { id: 'ascii', name: 'ASCII', draw: cells({ fill: '#', track: '-', open: '[', close: ']' }) },
-  { id: 'arrow', name: 'Arrow', draw: cells({ fill: '=', track: ' ', head: '>', open: '[', close: ']' }) },
-  { id: 'pie', name: 'Pie', isGlyph: true, draw: glyph('○◔◑◕●') },
-  { id: 'spark', name: 'Spark', isGlyph: true, draw: glyph(' ▁▂▃▄▅▆▇█') },
-  { id: 'none', name: 'Hidden (percent only)', isGlyph: true, draw: () => [] },
+  { id: 'blocks', draw: cells({ fill: '█', track: '░' }) },
+  { id: 'parallelogram', draw: cells({ fill: '▰', track: '▱' }) },
+  { id: 'shade', draw: cells({ fill: '▓', track: '░' }) },
+  { id: 'solid', draw: cells({ fill: '█', track: '█' }) },
+  { id: 'smooth', draw: smooth('░') },
+  { id: 'smooth-bare', draw: smooth(' ') },
+  { id: 'line', draw: cells({ fill: '━', track: '─' }) },
+  { id: 'heavy', draw: cells({ fill: '━', track: '━' }), trackColor: TRACK_HEAVY },
+  { id: 'dots', draw: cells({ fill: '●', track: '○' }) },
+  { id: 'squares', draw: cells({ fill: '■', track: '□' }) },
+  { id: 'diamonds', draw: cells({ fill: '◆', track: '◇' }) },
+  { id: 'braille', draw: cells({ fill: '⣿', track: '⣀' }) },
+  { id: 'ascii', draw: cells({ fill: '#', track: '-', open: '[', close: ']' }) },
+  { id: 'arrow', draw: cells({ fill: '=', track: ' ', head: '>', open: '[', close: ']' }) },
+  { id: 'pie', isGlyph: true, draw: glyph('○◔◑◕●') },
+  { id: 'spark', isGlyph: true, draw: glyph(' ▁▂▃▄▅▆▇█') },
+  { id: 'none', isGlyph: true, draw: () => [] },
 ]
 
 export const WIDTHS: readonly number[] = [3, 4, 5, 6, 8, 10, 12, 15, 20]
@@ -91,8 +94,6 @@ export const WIDTHS: readonly number[] = [3, 4, 5, 6, 8, 10, 12, 15, 20]
 export const DEFAULT_BAR: BarPref = { style: 'parallelogram', width: 5 }
 
 export const MOTIONS: readonly Motion[] = ['lively', 'subtle', 'off']
-
-export const MOTION_LABELS: Record<Motion, string> = { lively: 'Lively', subtle: 'Subtle', off: 'Off' }
 
 export const DEFAULT_MOTION: Motion = 'lively'
 
@@ -104,16 +105,31 @@ export function drawBar(pref: BarPref, percent: number): BarPart[] {
   return styleOf(pref.style).draw(percent, pref.width)
 }
 
-/** A stored value read back over the default, so a renamed style or a missing field never breaks a draw. */
-export function normalizeBar(raw: unknown): BarPref {
-  const one = (raw ?? {}) as Partial<BarPref>
-  const style = STYLES.some(s => s.id === one.style) ? one.style! : DEFAULT_BAR.style
-  const width = typeof one.width === 'number' && WIDTHS.includes(one.width) ? one.width : DEFAULT_BAR.width
-
-  return { style, width }
+/** The color of a bar's track cells: the style's own, else the shared gray. */
+export function trackColorOf(pref: BarPref): number {
+  return styleOf(pref.style).trackColor ?? TRACK
 }
 
-/** A stored motion read back over the default. */
-export function normalizeMotion(raw: unknown): Motion {
-  return MOTIONS.find(m => m === raw) ?? DEFAULT_MOTION
+/** The drawing while the fill grows: blocks eases its tip by eighths of a cell, as claudeticker's blocks meter; every other style as at rest. */
+export function drawMoving(pref: BarPref, percent: number): BarPart[] {
+  return styleOf(pref.style).id === 'blocks' ? smooth('░')(percent, pref.width) : drawBar(pref, percent)
+}
+
+/** The /config settings: the subagent rows' bar and their motion. */
+export type Settings = { bar: BarPref; motion: Motion }
+
+export const DEFAULT_SETTINGS: Settings = { bar: DEFAULT_BAR, motion: DEFAULT_MOTION }
+
+/** The /config settings, each falling back to its default when unknown. */
+export function normalizeSettings(options: Record<string, unknown>): Settings {
+  const style = options.barStyle
+  const width = Number(options.barWidth)
+
+  return {
+    bar: {
+      style: typeof style === 'string' && STYLES.some(s => s.id === style) ? style : DEFAULT_BAR.style,
+      width: WIDTHS.includes(width) ? width : DEFAULT_BAR.width,
+    },
+    motion: MOTIONS.find(m => m === options.motion) ?? DEFAULT_MOTION,
+  }
 }

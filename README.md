@@ -23,9 +23,9 @@ A mod for the Claude Code CLI that shows what each running subagent runs on. Cla
 - **A finish:** a subagent that ends shows ` ✦ done · 42s` in place of its time for 2 seconds, then leaves. A stopped one reads `✗ stopped`, a failed one `✗ failed`.
 - **A finish toast:** `Claude-Spotter: Explore done · 42s · 63K`, once the subagent ends.
 - **A toast on spawn:** `Claude-Spotter: Explore → Sonnet 5.5 ·medium`, a moment after the subagent starts, once its first request has told its effort.
-- **Motion** (`/spotter`): Lively (default), Subtle or Off. The bars glint when they change: a warm sweep runs left to right when context rises, an icy one right to left when it falls, and the emptied cells fade. The fill grows smoothly and blends its color, and the percent rolls to its new value with the changed digits flashing. Rising past 50% or 80% pulses the bar, and in Lively the dot pulses red past 80%. A compaction drains the bar and shows `↻ −40%` for a moment. A bar that appears after the first draw fills in from empty. Subtle has softer glints, no sparkles, and a dot that dims more slowly (every second).
+- **Motion** (setting `motion`): Lively (default), Subtle or Off. The bars glint when they change: a warm sweep runs left to right when context rises, an icy one right to left when it falls, and the emptied cells fade. The fill grows smoothly and blends its color, and the percent rolls to its new value with the changed digits flashing. Rising past 50% or 80% pulses the bar, and in Lively the dot pulses red past 80%. A compaction drains the bar and shows `↻ −40%` for a moment. A bar that appears after the first draw fills in from empty. Subtle has softer glints, no sparkles, and a dot that dims more slowly (every second).
 - **Tool calls:** each tool a subagent calls flashes its name at the end of its row, `‹Grep›`, for a moment, when the row has room.
-- **Bar styles** (`/spotter`): the same 16 styles and widths as [claudepeeker](https://github.com/AndreaChiacchia/claude-peeker).
+- **Bar styles** (settings `barStyle`, `barWidth`): the same 17 styles and widths as [claudepeeker](https://github.com/AndreaChiacchia/claude-peeker), claudeticker's meter styles among them.
 - **Colors follow the fill:** green below 50%, yellow from 50%, red from 80%.
 - **Quieter than the status line:** the model and effort use claudepeeker's amber and cyan, muted and not bold, so the main session's line stays the brightest.
 - **Works with claudepeeker:** its status line stays right under the hint line, and the subagent rows go below it.
@@ -50,13 +50,21 @@ Or load it for a single session with `claude --plugin-dir <path to this folder>`
 
 | Command | What it does |
 |---|---|
-| `/spotter` | Open the panel: the bar style and width, and Motion |
+| `/spotter` | Say where the settings are (`/config`) |
 | `/spotter demo` | Play a 20-second tour of the row effects with three made-up subagents |
 | `/spotter demo stop` | End the demo; the real subagents come back |
 
-The panel previews the bar. Click `‹` or `›` to step its style or width, and the `‹` or `›` beside Motion to pick Lively, Subtle or Off.
-
 The demo uses your Motion choice (with Off the figures change without effects) and goes back to your real subagents when it ends. It raises no toasts and saves nothing.
+
+## Settings
+
+Set them in `/config`, or in settings under `pluginConfigs.claudespotter`. A change applies at once.
+
+| Setting | Values (default first) | Example |
+|---|---|---|
+| `barStyle` | `parallelogram`, `blocks`, `shade`, `solid`, `smooth`, `smooth-bare`, `line`, `heavy`, `dots`, `squares`, `diamonds`, `braille`, `ascii`, `arrow`, `pie`, `spark`, `none` | each row's bar: `▰▰▱▱▱` / `█░░░░` / `━━━━━` |
+| `barWidth` | `5`, `3`, `4`, `6`, `8`, `10`, `12`, `15`, `20` | how many cells each bar takes (pie, spark and none ignore it) |
+| `motion` | `lively`, `subtle`, `off` | glints, growth and rolling figures / the same, softer / still rows |
 
 ## How it works
 
@@ -65,7 +73,7 @@ The demo uses your Motion choice (with Off the figures change without effects) a
 - **Time:** counted from when the spawn settled.
 - **Which subagents:** the ones `$.agent.list()` reports as pending, running or waiting, teammates left out. A finished subagent stays for 2 seconds with its finish mark, then its row leaves. A subagent that runs again becomes a live row again.
 - **Painting:** with Motion on, each row is three small cell grids (the dot, the bar and the tail) repainted 20 times a second while it's live or something moves. Only the pieces that changed are sent. Off, and any surface but the terminal, draws the plain text rows instead.
-- **Your choices:** the bar style, the width and Motion are kept in the mod's own store, so they last across sessions. Motion has its own key, `motion`, and is Lively until you change it.
+- **Your choices:** settings in `/config`, kept by Claude Code in settings.json, so they last across sessions, `/clear` and `/resume`.
 
 ## Limitations
 
@@ -76,21 +84,22 @@ The demo uses your Motion choice (with Off the figures change without effects) a
 ## Development
 
 ```
+npx -y -p typescript@5.6.3 tsc -p .
 claude plugin validate .
 claude plugin test .
 ```
 
 | Path | Contents |
 |---|---|
-| `hooks/register.tsx` | the mod: subagent tracking, the rows under the hint, the toasts, the `/spotter` panel and demo |
+| `hooks/register.tsx` | the mod: subagent tracking, the rows under the hint, the toasts, the `/spotter` command and demo |
 | `hooks/format.ts` | the rows as colored segments: model names, effort, token counts, window sizes, elapsed time, finish marks |
-| `hooks/styles.ts` | the bar styles, the Motion levels and the stored preferences |
+| `hooks/styles.ts` | the bar styles, the Motion levels and the settings |
 | `hooks/motion.ts` | the bars' motion: what changed, the effects, each frame |
 | `hooks/row.ts` | the row's dot and tail: the state glyph, the elapsed time, the tool flash and the finish mark |
 | `hooks/cells.ts` | colors, blending, the cell encoding |
 | `hooks/demo.ts` | the demo's script |
 | `types/index.d.ts` | the mod's state contract |
-| `tests/` | tests for the rows, the motion, the demo, the toasts, the panel and the figures |
+| `tests/` | tests for the rows, the motion, the demo, the toasts, the settings and the figures |
 
 ## License
 

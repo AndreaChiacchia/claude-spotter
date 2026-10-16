@@ -1,13 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentStatus, Elements, EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
-import type { AgentStat, BarPref, Motion } from '../types'
+import type { AgentStat, Motion } from '../types'
 import { encodeCells } from './cells'
 import type { Cell } from './cells'
 import { DEMO_END_MS, DEMO_TICK_MS, DEMO_WINDOW, demoRowsAt, demoToolsAt, isDemoChangeAt } from './demo'
 import {
   DEFAULT_WINDOW,
-  barSegments,
   ctxPercent,
   finishToast,
   formatElapsed,
@@ -33,23 +32,9 @@ import {
 } from './motion'
 import type { MotionState } from './motion'
 import { composeDot, composeTail, flashTool, markDone, tailWidth, toolSlot } from './row'
-import {
-  DEFAULT_BAR,
-  DEFAULT_MOTION,
-  MOTIONS,
-  MOTION_LABELS,
-  STYLES,
-  WIDTHS,
-  normalizeBar,
-  normalizeMotion,
-  styleOf,
-} from './styles'
+import { DEFAULT_SETTINGS, normalizeSettings } from './styles'
+import type { Settings } from './styles'
 
-const PANE = 'spotter-bar'
-const STORE_KEY = 'bar'
-const MOTION_KEY = 'motion'
-/** The fill the panel previews the bar at. */
-const PREVIEW = 40
 /** The agent states the hint line lists: started and not yet ended. */
 const LIVE: readonly AgentStatus[] = ['pending', 'running', 'waiting']
 /** How long after the spawn the toast waits, so the subagent's first request has told its effort. */
@@ -69,25 +54,9 @@ const DEFAULT_COLUMNS = 80
 
 const spawns = atom({ plugin: 'claudespotter', key: 'spawns' } as const, {})
 const stats = atom({ plugin: 'claudespotter', key: 'stats' } as const, {})
-const bar = atom({ plugin: 'claudespotter', key: 'bar' } as const, DEFAULT_BAR)
-const motionPref = atom({ plugin: 'claudespotter', key: 'motion' } as const, DEFAULT_MOTION)
 
-async function saveBar($: EngineInterface, change: (b: BarPref) => BarPref): Promise<void> {
-  await update($, bar, change)
-  await $.store.set(STORE_KEY, await read($, bar))
-}
-
-async function saveMotion($: EngineInterface, change: (m: Motion) => Motion): Promise<void> {
-  await update($, motionPref, change)
-  await $.store.set(MOTION_KEY, await read($, motionPref))
-}
-
-/** The item `by` steps from `at`, wrapping round the list. */
-function cycle<T>(list: readonly T[], at: T, by: 1 | -1): T {
-  const i = list.indexOf(at)
-
-  return list[(i + by + list.length) % list.length] ?? at
-}
+/** The /config settings, read in `register`: a module variable, so /clear and /resume keep them; a /config change reloads the module. */
+let settings: Settings = DEFAULT_SETTINGS
 
 // State of the running module. It is lost on a reload by design: the next render rebuilds it.
 // `register` resets it, so a module instance shared by several loads starts each one clean.
@@ -259,14 +228,15 @@ type RowData = {
   finish: { word: FinishWord; durationMs: number; at: number } | null
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  settings = normalizeSettings(options)
   // A fresh load starts from a clean state.
   stopTimer()
   stopStill()
   demo?.timer.cancel()
   demo = null
   motion = createMotion()
-  level = 'lively'
+  level = settings.motion
   isBlitting = false
   site = null
   lastBlit.clear()
@@ -281,15 +251,14 @@ export const register: Register = on => {
   exitScheduled.clear()
 
   on('session.start', async ($, e, next) => {
-    const stored = await $.store.get(STORE_KEY)
-    if (stored !== undefined) await update($, bar, () => normalizeBar(stored))
-    const storedMotion = await $.store.get(MOTION_KEY)
-    if (storedMotion !== undefined) await update($, motionPref, () => normalizeMotion(storedMotion))
     await $.command.register({
       name: 'spotter',
-      description: "Pick the style and width of the subagents' context bar, and how the rows move",
+      description: "Play the subagent rows' motion demo; the settings are in /config",
       argumentHint: '[demo | demo stop]',
     })
+    // The old, now unused store keys: dropped (the settings live in /config).
+    void $.store.delete('bar').catch(() => undefined)
+    void $.store.delete('motion').catch(() => undefined)
     // A /clear or a resume ends a demo and starts the rows over: what appears next is taken silently.
     endDemo($)
     silenceRows()
@@ -298,6 +267,8 @@ export const register: Register = on => {
     ends.clear()
     seenLive.clear()
     exitScheduled.clear()
+    // A module reloaded by a /config change redraws at once.
+    $.ui.invalidate('ui.render')
 
     return next(e)
   })
@@ -398,17 +369,16 @@ export const register: Register = on => {
   // subagent last: the nearest a mod draws to the footer's agent list. No padding:
   // the hint slot is indented already.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    const [agents, all, spawned, pref, motionSetting, usage, mainModel, clockNow] = await Promise.all([
+    const [agents, all, spawned, usage, mainModel, clockNow] = await Promise.all([
       $.agent.list(),
       read($, stats),
       read($, spawns),
-      read($, bar),
-      read($, motionPref),
       $.session.usage(),
       $.session.model(),
       $.clock.now(),
     ])
-    level = motionSetting
+    const pref = settings.bar
+    level = settings.motion
     // The module's memory follows the agents the engine lists.
     const listed = new Set(agents.map(a => a.id))
     for (const id of [...firstSeen.keys()]) if (!listed.has(id)) firstSeen.delete(id)
@@ -631,12 +601,12 @@ export const register: Register = on => {
     const arg = e.args.trim()
     if (arg === 'demo') {
       await startDemo($)
-      const isOff = (await read($, motionPref)) === 'off'
+      const isOff = settings.motion === 'off'
 
       return {
         text:
           'Playing the motion demo for 20 s under the prompt, with made-up subagents. /spotter demo stop ends it.' +
-          (isOff ? ' Motion is Off, so the rows change without effects: pick Lively or Subtle in /spotter to see them.' : ''),
+          (isOff ? ' Motion is Off, so the rows change without effects: set Motion to lively or subtle in /config to see them.' : ''),
       }
     }
     if (arg === 'demo stop') {
@@ -645,57 +615,10 @@ export const register: Register = on => {
 
       return { text: 'Stopped the demo: the rows show your real subagents again.' }
     }
-    await $.ui.open({ id: PANE, title: 'Subagent ctx bar', focus: true, closeOnEscape: true })
 
-    return { text: 'Opened the subagent bar panel.' }
-  })
-
-  // The panel: the bar previewed once, and ‹ › arrows stepping its style and width, and the motion.
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const [pref, motionSetting] = await Promise.all([read($, bar), read($, motionPref)])
-    const style = styleOf(pref.style)
-    const stepper = (key: string, value: string, step: (by: 1 | -1) => void, isOff = false) => (
-      <Box flexDirection="row" flexShrink={0}>
-        <Button key={`${key}-prev`} plain dimColor={isOff} onPress={() => step(-1)}>
-          ‹
-        </Button>
-        <Text dimColor={isOff}> {value} </Text>
-        <Button key={`${key}-next`} plain dimColor={isOff} onPress={() => step(1)}>
-          ›
-        </Button>
-      </Box>
-    )
-
-    return (
-      <Box flexDirection="column">
-        <Box flexDirection="row" marginBottom={1}>
-          {run(Text, [{ text: 'ctx ' }, ...barSegments(pref, PREVIEW)])}
-        </Box>
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-          {stepper('style', style.name, by => saveBar($, old => ({ ...old, style: cycle(STYLES, style, by).id })))}
-          {stepper(
-            'width',
-            style.isGlyph ? '1 cell' : `${pref.width} cells`,
-            by => saveBar($, old => ({ ...old, width: cycle(WIDTHS, old.width, by) })),
-            style.isGlyph,
-          )}
-        </Box>
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-          <Text bold>Motion</Text>
-          {stepper('motion', MOTION_LABELS[motionSetting], by => saveMotion($, old => cycle(MOTIONS, old, by)))}
-        </Box>
-        <Box flexDirection="row" marginTop={1} columnGap={1}>
-          <Button key="reset" onPress={() => saveBar($, () => DEFAULT_BAR)}>
-            Reset
-          </Button>
-          <Button key="close" role="dismiss" onPress={() => $.ui.close({ id: PANE })}>
-            Close
-          </Button>
-        </Box>
-        <Text dimColor>Click ‹ › to change the bar or the motion.</Text>
-      </Box>
-    )
+    return {
+      text: "Claude-Spotter's settings are in /config: the bar style and width, and Motion. /spotter demo plays the motion tour.",
+    }
   })
 }
 

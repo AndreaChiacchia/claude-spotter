@@ -19,7 +19,7 @@ import {
 } from './cells'
 import type { Cell } from './cells'
 import { TONES, formatTokens, tone } from './format'
-import { drawBar, styleOf } from './styles'
+import { drawBar, drawMoving, styleOf, trackColorOf } from './styles'
 import type { BarPart } from './styles'
 
 /** One frame, in milliseconds: 20 frames a second. */
@@ -430,10 +430,16 @@ export function composeBar(m: MotionState, id: string, pref: BarPref, level: 'li
   const target = b.target ?? b.shown
 
   // 1. The drawing.
-  const p = growAt(b, t) ?? target
-  const list = slots(drawBar(pref, p))
+  const growing = growAt(b, t)
+  const p = growing ?? target
+  const list = slots(growing === null ? drawBar(pref, p) : drawMoving(pref, p))
   const fillColor = colorAt(b, t) ?? toneColor(target)
-  const cells: Cell[] = list.map(s => ({ cp: s.cp, fg: s.kind === 'fill' ? fillColor : TRACK, bg: DEFAULT }))
+  const track = trackColorOf(pref)
+  const cells: Cell[] = list.map(s => ({
+    cp: s.cp,
+    fg: s.kind === 'fill' ? fillColor : s.kind === 'track' ? track : TRACK,
+    bg: DEFAULT,
+  }))
   const width = list.filter(s => s.i >= 0).length
 
   // 2. The drain of the cells a fall emptied.
@@ -447,7 +453,7 @@ export function composeBar(m: MotionState, id: string, pref: BarPref, level: 'li
       if (!drain.sparkle) {
         if (elapsed >= DRAIN_FRAMES) return
         cell.cp = old
-        cell.fg = mixColor(drain.oldColor, TRACK, ease(elapsed, DRAIN_FRAMES))
+        cell.fg = mixColor(drain.oldColor, track, ease(elapsed, DRAIN_FRAMES))
         return
       }
       const k = drain.from - 1 - s.i
@@ -460,7 +466,7 @@ export function composeBar(m: MotionState, id: string, pref: BarPref, level: 'li
         cell.fg = GLINT_DOWN
       } else if (sp < 4) {
         cell.cp = SPARK_HOLLOW
-        cell.fg = mixColor(GLINT_DOWN, TRACK, 0.5)
+        cell.fg = mixColor(GLINT_DOWN, track, 0.5)
       }
     })
   }
