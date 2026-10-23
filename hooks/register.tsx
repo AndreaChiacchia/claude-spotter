@@ -22,10 +22,14 @@ import type { DotState, FinishWord, Segment } from './format'
 import {
   FINISH_MS,
   FRAME_MS,
+  IDLE_FRAME_MS,
+  IDLE_FRAME_TICKS,
   advance,
   composeBar,
   createMotion,
+  frameMsFor,
   isActive,
+  isBarActive,
   observe,
   pruneMotion,
   startFade,
@@ -63,16 +67,22 @@ let settings: Settings = DEFAULT_SETTINGS
 let motion: MotionState = createMotion()
 let level: Motion = 'lively'
 let timer: Timer | null = null
+/** The running frame timer's period. */
+let timerMs = FRAME_MS
 /** Redraws the plain rows once a second while a subagent lives. */
 let stillTimer: Timer | null = null
 let isBlitting = false
-/** One Raster of a row: its key, its width at the render, and its cells at a moment (ms on the demo or the real clock). */
-type Piece = { key: string; width: number; compose: (now: number) => Cell[] }
+/** One Raster of a row: its key, which part it is and whose, its width at the render, and its cells at a moment (ms on the demo or the real clock). */
+type Piece = { key: string; kind: 'dot' | 'bar' | 'tail'; agentId: string; width: number; compose: (now: number) => Cell[] }
 /** The mounted Rasters the timer repaints: the render's request, each piece, the real agents drawn and whether any lives. */
 type Site = { requestId: string; pieces: Piece[]; ids: Set<string>; hasLive: boolean }
 let site: Site | null = null
 /** What each Raster last showed (by key), so an unchanged frame is not sent again. */
 const lastBlit = new Map<string, string>()
+/** Bars whose effect-free frame a blit for the current drawing was accepted with: until something moves in them again their frame cannot change, so it is not composed. Never set at a draw, cleared by a refusal. */
+const settledBars = new Set<string>()
+/** Set when a /clear or a resume cut an effect off: the next Raster draw does not take the screen to show the drawing, so each piece is sent once. */
+let isResendPending = false
 /** Blits accepted since the last render that drew the Rasters. */
 let framesSinceMount = 0
 /** Fresh draws whose first blit was refused, while no blit has ever been accepted. */
@@ -113,6 +123,7 @@ function silenceRows(): void {
   motion = createMotion()
   stopTimer()
   site = null
+  settledBars.clear()
 }
 
 function endDemo($: EngineInterface): void {
@@ -122,6 +133,18 @@ function endDemo($: EngineInterface): void {
   silenceRows()
   // The real rows come back silently.
   primed = false
+  $.ui.invalidate('ui.render')
+}
+
+/** A start, a reload, a /clear or a resume: a running demo ends, the rows start over and what appears next is taken silently. */
+function forgetRows($: EngineInterface): void {
+  endDemo($)
+  silenceRows()
+  primed = false
+  firstSeen.clear()
+  ends.clear()
+  seenLive.clear()
+  exitScheduled.clear()
   $.ui.invalidate('ui.render')
 }
 
@@ -156,8 +179,14 @@ function needsTimer(): boolean {
   return site !== null && !isStaticFallback && level !== 'off' && (site.hasLive || isActive(motion))
 }
 
+/** Starts the frame timer, or changes its period: every frame while an effect plays, every `IDLE_FRAME_MS` while only the spinner and the time move. */
 function kick($: EngineInterface): void {
-  if (timer === null && needsTimer()) timer = $.clock.every(FRAME_MS, () => void step($))
+  if (!needsTimer()) return
+  const ms = frameMsFor(motion)
+  if (timer !== null && timerMs === ms) return
+  timer?.cancel()
+  timerMs = ms
+  timer = $.clock.every(ms, () => void step($))
 }
 
 /** One frame: the motion advances and each row's Rasters are repainted in place. */
@@ -171,11 +200,15 @@ async function step($: EngineInterface): Promise<void> {
 
       return
     }
-    advance(motion)
-    const now = demo !== null ? demo.ticks * DEMO_TICK_MS : await $.clock.now()
+    // On the slow period one frame stands for IDLE_FRAME_TICKS ticks; nothing rolls then, so each only moves the tick.
+    const ticks = timerMs === IDLE_FRAME_MS ? IDLE_FRAME_TICKS : 1
+    for (let i = 0; i < ticks; i++) advance(motion)
+    // Only a live row's elapsed time reads the clock; every other piece ignores `now`.
+    const now = demo !== null ? demo.ticks * DEMO_TICK_MS : target.hasLive ? await $.clock.now() : 0
     // A render replaced the site while the clock was read: its own mount is the newer frame; the timer goes on.
     if (site !== target) return
     for (const piece of target.pieces) {
+      if (piece.kind === 'bar' && settledBars.has(piece.key) && !isBarActive(motion, piece.agentId)) continue
       const cells = piece.compose(now)
       if (cells.length !== piece.width) {
         // A width change (9% to 10%, a badge appearing or leaving, 9s to 10s) is a redraw, never a blit.
@@ -191,8 +224,10 @@ async function step($: EngineInterface): Promise<void> {
         everBlitted = true
         framesSinceMount += 1
         lastBlit.set(piece.key, encoded)
+        if (piece.kind === 'bar' && site === target && !isBarActive(motion, piece.agentId)) settledBars.add(piece.key)
       } else if (framesSinceMount === 0 && !everBlitted) {
         // The first blit after a fresh draw was refused: this slot may not take blits. A fresh mount retries.
+        if (piece.kind === 'bar') settledBars.delete(piece.key)
         refusedMounts += 1
         stopTimer()
         if (refusedMounts >= MAX_REFUSED_MOUNTS) {
@@ -204,6 +239,7 @@ async function step($: EngineInterface): Promise<void> {
         return
       } else {
         // Refused after earlier successes (a dialog, a resize, the prompt hidden): a later render restarts the timer.
+        if (piece.kind === 'bar') settledBars.delete(piece.key)
         stopTimer()
 
         return
@@ -211,6 +247,7 @@ async function step($: EngineInterface): Promise<void> {
       if (site !== target) return
     }
     if (!needsTimer()) stopTimer()
+    else kick($)
   } finally {
     isBlitting = false
   }
@@ -232,6 +269,7 @@ export const register: Register = (on, options) => {
   settings = normalizeSettings(options)
   // A fresh load starts from a clean state.
   stopTimer()
+  timerMs = FRAME_MS
   stopStill()
   demo?.timer.cancel()
   demo = null
@@ -240,6 +278,8 @@ export const register: Register = (on, options) => {
   isBlitting = false
   site = null
   lastBlit.clear()
+  settledBars.clear()
+  isResendPending = false
   framesSinceMount = 0
   refusedMounts = 0
   everBlitted = false
@@ -259,16 +299,20 @@ export const register: Register = (on, options) => {
     // The old, now unused store keys: dropped (the settings live in /config).
     void $.store.delete('bar').catch(() => undefined)
     void $.store.delete('motion').catch(() => undefined)
-    // A /clear or a resume ends a demo and starts the rows over: what appears next is taken silently.
-    endDemo($)
-    silenceRows()
-    primed = false
-    firstSeen.clear()
-    ends.clear()
-    seenLive.clear()
-    exitScheduled.clear()
+    // A start or a reload ends a demo and starts the rows over (a /clear or a resume comes through `session.end`).
     // A module reloaded by a /config change redraws at once.
-    $.ui.invalidate('ui.render')
+    forgetRows($)
+
+    return next(e)
+  })
+
+  // /clear and /resume fire no `session.start`: the rows see them as the end of the old session.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      const wasMoving = site !== null && everBlitted && isActive(motion)
+      forgetRows($)
+      isResendPending = wasMoving
+    }
 
     return next(e)
   })
@@ -301,18 +345,25 @@ export const register: Register = (on, options) => {
     const agentId = e.agentId
     if (agentId === undefined) return yield* next(e)
     const effort = e.effort ?? null
-    await update($, stats, all => ({
-      ...all,
-      [agentId]: { model: e.model, effort, tokens: all[agentId]?.tokens ?? null },
-    }))
+    // `update` always writes and redraws the rows: a request on the same model and effort writes nothing before it goes.
+    const known = (await read($, stats))[agentId]
+    if (known === undefined || known.model !== e.model || known.effort !== effort) {
+      await update($, stats, all => ({
+        ...all,
+        [agentId]: { model: e.model, effort, tokens: all[agentId]?.tokens ?? null },
+      }))
+    }
     const result = yield* next(e)
     const usage = result.usage
     if (usage) {
       const tokens = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
-      await update($, stats, all => {
-        const one = all[agentId]
-        return one ? { ...all, [agentId]: { ...one, tokens } } : all
-      })
+      const held = (await read($, stats))[agentId]
+      if (held !== undefined && held.tokens !== tokens) {
+        await update($, stats, all => {
+          const one = all[agentId]
+          return one ? { ...all, [agentId]: { ...one, tokens } } : all
+        })
+      }
     }
 
     return result
@@ -326,6 +377,7 @@ export const register: Register = (on, options) => {
       exitScheduled.delete(id)
       motion.bars.delete(id)
       motion.rows.delete(id)
+      settledBars.clear()
       $.ui.invalidate('ui.render')
     }
 
@@ -449,6 +501,7 @@ export const register: Register = (on, options) => {
       stopTimer()
       stopStill()
       site = null
+      isResendPending = false
       pruneMotion(motion, new Set())
       primed = true
 
@@ -495,6 +548,9 @@ export const register: Register = (on, options) => {
       const cols = Math.min(512, (e.viewport?.columns ?? DEFAULT_COLUMNS) - HINT_INDENT)
       const pieces: Piece[] = []
       lastBlit.clear()
+      settledBars.clear()
+      const isResend = isResendPending
+      isResendPending = false
       rows = data.map((r, i) => {
         const label: Segment[] = [{ text: ' ' }, ...labelSegments(r.stat, r.type, r.window)]
         const labelWidth = label.reduce((n, s) => n + Array.from(s.text).length, 0)
@@ -506,8 +562,14 @@ export const register: Register = (on, options) => {
 
         const dotCells = composeDot(motion, r.id, r.dot, moving)
         const dotEncoded = encodeCells(dotCells)
-        pieces.push({ key: dotKey, width: dotCells.length, compose: () => composeDot(motion, r.id, r.dot, moving) })
-        lastBlit.set(dotKey, dotEncoded)
+        pieces.push({
+          key: dotKey,
+          kind: 'dot',
+          agentId: r.id,
+          width: dotCells.length,
+          compose: () => composeDot(motion, r.id, r.dot, moving),
+        })
+        if (!isResend) lastBlit.set(dotKey, dotEncoded)
 
         let barWidth = 0
         let barEncoded: string | null = null
@@ -515,8 +577,14 @@ export const register: Register = (on, options) => {
           const barCells = composeBar(motion, r.id, pref, moving)
           barWidth = barCells.length
           barEncoded = encodeCells(barCells)
-          pieces.push({ key: barKey, width: barWidth, compose: () => composeBar(motion, r.id, pref, moving) })
-          lastBlit.set(barKey, barEncoded)
+          pieces.push({
+            key: barKey,
+            kind: 'bar',
+            agentId: r.id,
+            width: barWidth,
+            compose: () => composeBar(motion, r.id, pref, moving),
+          })
+          if (!isResend) lastBlit.set(barKey, barEncoded)
         }
 
         const finish = r.finish
@@ -537,11 +605,13 @@ export const register: Register = (on, options) => {
         const tailEncoded = encodeCells(tailCells)
         pieces.push({
           key: tailKey,
+          kind: 'tail',
+          agentId: r.id,
           width: tailWidth(tail),
           compose: at =>
             composeTail(motion, r.id, tail.kind === 'live' ? { ...tail, elapsedMs: at - r.startAt } : tail, moving),
         })
-        lastBlit.set(tailKey, tailEncoded)
+        if (!isResend) lastBlit.set(tailKey, tailEncoded)
 
         return (
           <Box flexDirection="row">
@@ -564,6 +634,7 @@ export const register: Register = (on, options) => {
     } else {
       stopTimer()
       site = null
+      isResendPending = false
       rows = data.map((r, i) => (
         <Box flexDirection="row">
           <Text wrap="truncate-end">

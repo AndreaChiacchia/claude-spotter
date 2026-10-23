@@ -24,6 +24,10 @@ import type { BarPart } from './styles'
 
 /** One frame, in milliseconds: 20 frames a second. */
 export const FRAME_MS = 50
+/** While only the running spinner and the elapsed time move: a frame every 200 ms, four frames' worth (the Lively spinner steps every 4 frames, the Subtle one every 20, the time every second). */
+export const IDLE_FRAME_MS = 200
+/** The ticks one slow frame stands for. */
+export const IDLE_FRAME_TICKS = IDLE_FRAME_MS / FRAME_MS
 /** One glint pass (0.6 s). */
 export const GLINT_FRAMES = 12
 /** A change of at least this many points glints twice (Lively only). */
@@ -381,28 +385,41 @@ function drainEnd(d: NonNullable<BarAnim['drain']>): number {
   return d.sparkle ? d.start + SPARK_STRIDE * (d.from - d.to - 1) + 4 : d.start + DRAIN_FRAMES
 }
 
+/** True while something still moves in this agent's bar: a figure rolling, an effect before its end, or its fade; false for an agent with no bar (it creates none). */
+export function isBarActive(m: MotionState, id: string): boolean {
+  const b = m.bars.get(id)
+  if (b === undefined) return false
+  const t = m.tick
+  if (b.target !== null && b.shown !== b.target) return true
+  if (b.tokens.target !== null && b.tokens.shown !== b.tokens.target) return true
+  if (b.glint !== null && t < b.glint.start + GLINT_FRAMES * b.glint.passes) return true
+  if (b.grow !== null && t < b.grow.start + GROW_FRAMES) return true
+  if (b.color !== null && t < b.color.start + COLOR_FRAMES) return true
+  if (b.drain !== null && t < drainEnd(b.drain)) return true
+  if (b.pulse !== null && t < b.pulse.start + PULSE_LENGTH * PULSE_COUNT) return true
+  if (b.badge !== null && t < b.badge.start + BADGE_FRAMES) return true
+  if (b.flash !== null && t < b.flash.until) return true
+  if (b.tokens.flash !== null && t < b.tokens.flash.until) return true
+  if (b.fade !== null && t < b.fade.start + FADE_FRAMES) return true
+
+  return false
+}
+
 /** True while anything is still moving: a figure rolling, an effect before its end, a fade, a tool flash or a done mark. */
 export function isActive(m: MotionState): boolean {
   const t = m.tick
-  for (const b of m.bars.values()) {
-    if (b.target !== null && b.shown !== b.target) return true
-    if (b.tokens.target !== null && b.tokens.shown !== b.tokens.target) return true
-    if (b.glint !== null && t < b.glint.start + GLINT_FRAMES * b.glint.passes) return true
-    if (b.grow !== null && t < b.grow.start + GROW_FRAMES) return true
-    if (b.color !== null && t < b.color.start + COLOR_FRAMES) return true
-    if (b.drain !== null && t < drainEnd(b.drain)) return true
-    if (b.pulse !== null && t < b.pulse.start + PULSE_LENGTH * PULSE_COUNT) return true
-    if (b.badge !== null && t < b.badge.start + BADGE_FRAMES) return true
-    if (b.flash !== null && t < b.flash.until) return true
-    if (b.tokens.flash !== null && t < b.tokens.flash.until) return true
-    if (b.fade !== null && t < b.fade.start + FADE_FRAMES) return true
-  }
+  for (const id of m.bars.keys()) if (isBarActive(m, id)) return true
   for (const r of m.rows.values()) {
     if (r.tool !== null && t < r.tool.start + TOOL_FRAMES) return true
     if (r.doneStart !== null && t < r.doneStart + FADE_FRAMES) return true
   }
 
   return false
+}
+
+/** The frame timer's period: every frame while an effect plays, every `IDLE_FRAME_MS` while only the spinner and the time move. */
+export function frameMsFor(m: MotionState): number {
+  return isActive(m) ? FRAME_MS : IDLE_FRAME_MS
 }
 
 /** A row that finished: its bar takes its final figures, drops every effect and fades to gray. */

@@ -72,7 +72,7 @@ Set them in `/config`, or in settings under `pluginConfigs.claudespotter`. A cha
 - **Context:** the input, cache-read and cache-creation tokens of the subagent's latest response, as a percent of its window and as a token count.
 - **Time:** counted from when the spawn settled.
 - **Which subagents:** the ones `$.agent.list()` reports as pending, running or waiting, teammates left out. A finished subagent stays for 2 seconds with its finish mark, then its row leaves. A subagent that runs again becomes a live row again.
-- **Painting:** with Motion on, each row is three small cell grids (the dot, the bar and the tail) repainted 20 times a second while it's live or something moves. Only the pieces that changed are sent. Off, and any surface but the terminal, draws the plain text rows instead.
+- **Painting:** with Motion on, each row is three small cell grids (the dot, the bar and the tail) repainted 20 times a second while something moves in them, and 5 times a second while only the spinner and the elapsed time do. Only the pieces that changed are sent. Off, and any surface but the terminal, draws the plain text rows instead.
 - **Your choices:** settings in `/config`, kept by Claude Code in settings.json, so they last across sessions, `/clear` and `/resume`.
 
 ## Limitations

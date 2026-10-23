@@ -2,7 +2,22 @@ import { expect, test } from 'claude-code/testing'
 
 import { GLINT_UP, TRACK, DEFAULT, mixColor } from '../hooks/cells'
 import type { Cell } from '../hooks/cells'
-import { FADE_FRAMES, advance, composeBar, createMotion, isActive, observe, startFade } from '../hooks/motion'
+import {
+  DOT_SPIN_FRAMES,
+  DOT_SPIN_SUBTLE_FRAMES,
+  FADE_FRAMES,
+  FRAME_MS,
+  IDLE_FRAME_MS,
+  IDLE_FRAME_TICKS,
+  advance,
+  composeBar,
+  createMotion,
+  frameMsFor,
+  isActive,
+  isBarActive,
+  observe,
+  startFade,
+} from '../hooks/motion'
 import type { MotionState } from '../hooks/motion'
 import { STYLES, drawBar, normalizeSettings } from '../hooks/styles'
 import type { BarPref, Motion } from '../types'
@@ -191,4 +206,61 @@ test('a finished bar fades to gray, drops every effect and takes no new value', 
 
   observe(m, 'a1', { percent: 20, tokens: 200_000 }, pref, 'lively', false)
   expect(barOf(m).target).toBe(55)
+})
+
+test('a bar with nothing moving draws the same frame from then on', () => {
+  const pref = { style: 'parallelogram', width: 5 }
+  const scenarios: [string, () => MotionState][] = [
+    ['a rise and a pulse', () => moved(pref, 12, 52)],
+    ['a compaction', () => moved(pref, 85, 23)],
+    [
+      'an entrance',
+      () => {
+        const m = createMotion()
+        observe(m, 'a1', { percent: 30, tokens: 300_000 }, pref, 'lively', true)
+
+        return m
+      },
+    ],
+    [
+      'a fade',
+      () => {
+        const m = moved(pref, 10, 40)
+        for (let i = 0; i < 3; i++) advance(m)
+        startFade(m, 'a1')
+
+        return m
+      },
+    ],
+  ]
+  for (const [, make] of scenarios) {
+    const m = make()
+    let isSettled = false
+    for (let i = 0; i <= 400; i++) {
+      // The bar's own test and the whole motion's agree while it is the only thing that moves.
+      expect(isActive(m)).toBe(isBarActive(m, 'a1'))
+      if (!isBarActive(m, 'a1')) {
+        isSettled = true
+        break
+      }
+      advance(m)
+    }
+    expect(isSettled).toBe(true)
+    const a = composeBar(m, 'a1', pref, 'lively')
+    for (let i = 0; i < 200; i++) advance(m)
+    const b = composeBar(m, 'a1', pref, 'lively')
+    expect(b).toEqual(a)
+  }
+  const none = createMotion()
+  expect(isBarActive(none, 'nobody')).toBe(false)
+  expect(none.bars.has('nobody')).toBe(false)
+})
+
+test('the slow period keeps every spinner step on a whole frame', () => {
+  const pref = { style: 'blocks', width: 10 }
+  expect(DOT_SPIN_FRAMES % IDLE_FRAME_TICKS).toBe(0)
+  expect(DOT_SPIN_SUBTLE_FRAMES % IDLE_FRAME_TICKS).toBe(0)
+  expect(IDLE_FRAME_TICKS * FRAME_MS).toBe(IDLE_FRAME_MS)
+  expect(frameMsFor(createMotion())).toBe(IDLE_FRAME_MS)
+  expect(frameMsFor(moved(pref, 12, 52))).toBe(FRAME_MS)
 })

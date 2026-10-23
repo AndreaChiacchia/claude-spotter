@@ -2,7 +2,7 @@ import type { AgentStatus, On, TurnStepResult } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { LIVE, TRACK, decodeCells, mixColor } from '../hooks/cells'
+import { GLINT_UP, LIVE, TRACK, decodeCells, mixColor } from '../hooks/cells'
 import type { Cell } from '../hooks/cells'
 
 const HINT = {
@@ -33,14 +33,20 @@ const ENGINE = 'esc to interrupt'
 
 type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
 
-type Blit = { requestId: string; key: string; cells: string; render: number }
+type Blit = { requestId: string; key: string; cells: string; render: number; isAccepted: boolean }
 
 /**
  * The engine beneath the mod: one subagent `a1` on `model`, answering over `tokens` of context.
  * The figures the tests move live in `state`; the blits the mod sends are recorded in `blits`.
  */
 function world(on: On, model: string, tokens: number, status: AgentStatus = 'running') {
-  const state = { status, tokens, blitAnswer: {} as { deny?: string } }
+  const state = {
+    status,
+    tokens,
+    blitAnswer: {} as { deny?: string },
+    /** When set and true for a blit's key and cells, that blit is refused (a dialog is up). */
+    refuse: null as null | ((key: string, cells: Cell[]) => boolean),
+  }
   const toasts: string[] = []
   const blits: Blit[] = []
   /** PromptHint renders so far: a blit belongs to the render whose Rasters it repaints. */
@@ -63,14 +69,20 @@ function world(on: On, model: string, tokens: number, status: AgentStatus = 'run
     return { value: undefined }
   })
   on('ui.blit', (_$, e) => {
+    const cells = (e as unknown as { cells?: string }).cells ?? ''
+    const isRefused = state.refuse !== null && state.refuse(e.key, decodeCells(cells))
     blits.push({
       requestId: e.requestId,
       key: e.key,
-      cells: (e as unknown as { cells?: string }).cells ?? '',
+      cells,
       render: renders.count,
+      isAccepted: !isRefused && state.blitAnswer.deny === undefined,
     })
-    return { value: state.blitAnswer }
+    return { value: isRefused ? { deny: 'dialog' } : state.blitAnswer }
   })
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }) as never)
+  on('command.register', (_$, e) => ({ value: { command: e.name } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, percent: 0 }, rateLimits: [] } }))
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
   on('agent.list', () => ({ value: [{ id: 'a1', type: 'Plan', description: 'Searching', status: state.status }] }))
@@ -132,6 +144,8 @@ function walk(node: unknown, out: Node[] = []): Node[] {
 }
 
 const rasters = (node: unknown): Node[] => walk(node).filter(n => n.type === 'Raster')
+
+const raster = (drawn: unknown, key: string): Node | undefined => rasters(drawn).find(n => rasterKey(n) === key)
 
 /** The render each drawing came from, so `current` finds the blits that repaint its Rasters. */
 const stamps = new WeakMap<object, number>()
@@ -473,4 +487,151 @@ test('no setting is written to the store', async ($, on) => {
   await command($, 'demo')
   await w.clock.advance(1000)
   expect(w.store.size).toBe(0)
+})
+
+test('a bar that changes animates, then only the dot and the tail move', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const ui = await $.ui.mount(HINT)
+  await draw(w, ui)
+  w.state.tokens = 86_000
+  await step($, 'claude-sonnet-5-5', 'low')
+  await draw(w, ui)
+  await w.clock.advance(3000)
+  expect(blitTexts(w, 'spotter-bar-a1').length).toBeGreaterThan(0)
+  expect(blitTexts(w, 'spotter-bar-a1').at(-1)).toBe('▰▱▱▱▱ 9% · 86K')
+  const counts = () => ({
+    bar: blitTexts(w, 'spotter-bar-a1').length,
+    dot: blitTexts(w, 'spotter-dot-a1').length,
+    tail: blitTexts(w, 'spotter-tail-a1').length,
+  })
+  const before = counts()
+  await w.clock.advance(2000)
+  const after = counts()
+  expect(after.bar).toBe(before.bar)
+  expect(after.dot).toBeGreaterThan(before.dot)
+  expect(after.tail).toBeGreaterThan(before.tail)
+})
+
+test('a refused end-of-flash frame is sent again when the frames restart', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const ui = await $.ui.mount(HINT)
+  await draw(w, ui)
+  w.state.tokens = 86_000
+  // Only the frame that ends the token flash (tick 22) is refused, as a dialog would.
+  w.state.refuse = (key, cells) =>
+    key === 'spotter-bar-a1' && cellText(cells) === '▰▱▱▱▱ 9% · 86K' && !cells.some(c => c.fg === GLINT_UP)
+  await step($, 'claude-sonnet-5-5', 'low')
+  await draw(w, ui)
+  await w.clock.advance(2000)
+  // The frames stopped there.
+  expect(w.blits.some(b => b.key === 'spotter-bar-a1' && !b.isAccepted)).toBe(true)
+  w.state.refuse = null
+  // A tool call flashes the tail and restarts the frames, with no render.
+  await $.tool.call({ tool: 'Grep', agentId: 'a1', pattern: 'x' } as never)
+  await w.clock.advance(500)
+  const shown = w.blits.filter(b => b.key === 'spotter-bar-a1' && b.isAccepted).at(-1)
+  expect(shown).toBeDefined()
+  const cells = decodeCells(shown!.cells)
+  expect(cellText(cells)).toBe('▰▱▱▱▱ 9% · 86K')
+  expect(cells.some(c => c.fg === GLINT_UP)).toBe(false)
+})
+
+test("a subagent's later requests on the same model and effort write only what changed", async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  const writes = { count: 0 }
+  on('state.set', (_$, e, next) => {
+    const one = e as unknown as { plugin?: string; key?: string }
+    if (one.plugin === 'claudespotter' && one.key === 'stats') writes.count += 1
+    return next(e)
+  })
+  await spawn($)
+  // The first request: the model and effort going down, the tokens coming back.
+  await step($, 'claude-sonnet-5-5', 'low')
+  expect(writes.count).toBe(2)
+  writes.count = 0
+  await step($, 'claude-sonnet-5-5', 'low')
+  expect(writes.count).toBe(0)
+  w.state.tokens = 90_000
+  await step($, 'claude-sonnet-5-5', 'low')
+  expect(writes.count).toBe(1)
+  writes.count = 0
+  await step($, 'claude-sonnet-5-5', 'high')
+  expect(writes.count).toBe(1)
+  const ui = await $.ui.mount(HINT)
+  expect(text(await ui.drawn())).toContain('Sonnet 5.5 ·high · Plan · ctx (1M) ▰▱▱▱▱ 9% · 90K')
+})
+
+test('while a subagent runs and nothing else moves, the rows repaint every 200 ms and the spinner keeps its step', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  await w.clock.advance(100)
+  const ui = await $.ui.mount(HINT)
+  await draw(w, ui)
+  // Frames at 300, 500, 700, 900 and 1100: at 50 ms the second would flip at 1000.
+  await w.clock.advance(900)
+  expect(blitTexts(w, 'spotter-tail-a1').some(t => t.includes('1s'))).toBe(false)
+  await w.clock.advance(100)
+  expect(blitTexts(w, 'spotter-tail-a1').filter(t => t.includes('1s')).length).toBe(1)
+  expect(blitTexts(w, 'spotter-dot-a1')).toEqual(['◓', '◑', '◒', '◐', '◓'])
+  expect(blitTexts(w, 'spotter-bar-a1').length).toBe(0)
+})
+
+test('a /clear ends a running demo and brings the real row back', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const ui = await $.ui.mount(HINT)
+  await ui.drawn()
+  await command($, 'demo')
+  await w.clock.advance(3000)
+  expect(text(await ui.drawn())).toContain('Explore')
+  await $.session.end({ reason: 'clear', sessionId: 's1' } as never)
+  const after = text(await ui.drawn())
+  expect(after).toContain('Sonnet 5.5 ·low · Plan')
+  expect(after).not.toContain('Explore')
+  expect((await command($, 'demo stop')).text).toBe('No demo is running.')
+})
+
+test('a session start ends a running demo', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const ui = await $.ui.mount(HINT)
+  await ui.drawn()
+  await command($, 'demo')
+  await w.clock.advance(3000)
+  expect(text(await ui.drawn())).toContain('Explore')
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true } as never)
+  const after = text(await ui.drawn())
+  expect(after).toContain('Sonnet 5.5 ·low · Plan')
+  expect(after).not.toContain('Explore')
+  expect((await command($, 'demo stop')).text).toBe('No demo is running.')
+})
+
+test('a /clear in the middle of a highlight leaves no highlight behind', async ($, on) => {
+  const w = world(on, 'claude-sonnet-5-5', 76_000)
+  await spawn($)
+  await step($, 'claude-sonnet-5-5', 'low')
+  const ui = await $.ui.mount(HINT)
+  await draw(w, ui)
+  w.state.tokens = 86_000
+  await step($, 'claude-sonnet-5-5', 'low')
+  await draw(w, ui)
+  // The roll to 9% and its flash are accepted.
+  await w.clock.advance(150)
+  await $.session.end({ reason: 'clear', sessionId: 's1' } as never)
+  const drawn = await ui.drawn()
+  await w.clock.advance(1000)
+  // The new drawing takes the figures silently, and the piece cut off mid-effect is sent once as drawn.
+  const bar = raster(drawn, 'spotter-bar-a1')
+  expect(mountedText(bar!)).toBe('▰▱▱▱▱ 9% · 86K')
+  const shown = w.blits.filter(b => b.key === 'spotter-bar-a1' && b.isAccepted).at(-1)
+  expect(shown).toBeDefined()
+  expect(shown!.cells).toBe(bar?.props?.cells)
+  expect(decodeCells(shown!.cells).some(c => c.fg === GLINT_UP)).toBe(false)
 })
